@@ -35,9 +35,11 @@ typedef f80_t  ( *f8080_t   ) ( f80_t );
 typedef void   ( *fvoid64_t ) ( f64_t );
 
 /* Composites */
+typedef struct { u32_t x0; u32_t x1;            } u32_vec2_t;
 typedef struct { f32_t x0; f32_t x1;            } fp32_vec2_t;
 typedef struct { f32_t x0; f32_t x1; f32_t x2;  } fp32_vec3_t;
 
+typedef struct { u64_t x0; u64_t x1;            } u64_vec2_t;
 typedef struct { f64_t x0; f64_t x1;            } fp64_vec2_t;
 typedef struct { f64_t x0; f64_t x1; f64_t x2;  } fp64_vec3_t;
 
@@ -76,6 +78,13 @@ typedef struct
     i16_t s; /* { -1, +1 } */
 } fptriplet_t;
 
+typedef enum
+{
+    FP32,
+    FP64,
+    FP80,
+} fp_width_t;
+
 /* You should define ADD_EXPORTS *only* when building the DLL. */
 #ifdef ADD_EXPORTS
   #define ADDAPI __declspec(dllexport)
@@ -96,8 +105,15 @@ extern "C"
 typedef struct
 {
     bool_t debug_next_x_inside_boundaries;
+
     bool_t log_completation;
     bool_t log_completation_remove_history;
+
+    f32_t  fp32_grow_frac;
+    f32_t  fp64_grow_frac;
+
+    f32_t  fp32_ctrl_ulps;
+    f32_t  fp64_ctrl_ulps;
 } fpenv_t;
 
 extern ADDAPI fpenv_t g_fpenv;
@@ -111,38 +127,38 @@ ADDAPI extern bool_t        ADDCALL fp64_equals( f64_t a, f64_t b );
 ADDAPI extern bool_t        ADDCALL fp32_equals_sign( f32_t a, f32_t b );
 ADDAPI extern bool_t        ADDCALL fp64_equals_sign( f64_t a, f64_t b );
 
-ADDAPI extern f32_t         ADDCALL f32_geom_step_real_line( f32_t x, f32_t frac );
-ADDAPI extern f64_t         ADDCALL f64_geom_step_real_line( f64_t x, f64_t frac );
+ADDAPI extern f32_t         ADDCALL fp32_geom_step_real_line( f32_t x, f32_t frac );
+ADDAPI extern f64_t         ADDCALL fp64_geom_step_real_line( f64_t x, f64_t frac );
 
-ADDAPI extern fpset_t       ADDCALL f32_get_subset( f32_t x );
-ADDAPI extern fpset_t       ADDCALL f64_get_subset( f64_t x );
+ADDAPI extern fpset_t       ADDCALL fp32_get_subset( f32_t x );
+ADDAPI extern fpset_t       ADDCALL fp64_get_subset( f64_t x );
 
-ADDAPI extern cstr_t        ADDCALL fp64_get_subset_name( f64_t x );
 ADDAPI extern cstr_t        ADDCALL fp32_get_subset_name( f32_t x );
+ADDAPI extern cstr_t        ADDCALL fp64_get_subset_name( f64_t x );
 
-ADDAPI extern f32_t         ADDCALL f32_get_named_fp_in_real_line( named_fp_t point );
-/* TODO: ADDAPI extern f32_t         ADDCALL f32_get_named_fp_in_real_line( named_fp_t point ); */
+ADDAPI extern f32_t         ADDCALL fp32_get_named_fp_in_real_line( named_fp_t point );
+ADDAPI extern f64_t         ADDCALL fp64_get_named_fp_in_real_line( named_fp_t point );
 
-ADDAPI extern cstr_t        ADDCALL f32_sprint_digits_radix2( char_t buff [ 32 + 2 + 1 ], char_t sepparator, f32_t x );
-ADDAPI extern cstr_t        ADDCALL f64_sprint_digits_radix2( char_t buff [ 64 + 2 + 1 ], char_t sepparator, f64_t x );
+ADDAPI extern cstr_t        ADDCALL fp32_sprint_digits_radix2( char_t buff [ 32 + 2 + 1 ], char_t sepparator, f32_t x );
+ADDAPI extern cstr_t        ADDCALL fp64_sprint_digits_radix2( char_t buff [ 64 + 2 + 1 ], char_t sepparator, f64_t x );
 
-ADDAPI extern f32_t         ADDCALL f32_next_float( f32_t x );
-ADDAPI extern f64_t         ADDCALL f64_next_float( f64_t x );
+ADDAPI extern f32_t         ADDCALL fp32_next_float( f32_t x );
+ADDAPI extern f64_t         ADDCALL fp64_next_float( f64_t x );
 
-ADDAPI extern f32_t         ADDCALL f32_mount_bitfields( u32_t s, u32_t e, u32_t m );
-ADDAPI extern f64_t         ADDCALL f64_mount_bitfields( u64_t s, u64_t e, u64_t m );
+ADDAPI extern f32_t         ADDCALL fp32_mount_bitfields( u32_t s, u32_t e, u32_t m );
+ADDAPI extern f64_t         ADDCALL fp64_mount_bitfields( u64_t s, u64_t e, u64_t m );
 
-ADDAPI extern fptriplet_t   ADDCALL f32_get_triplet( f32_t x );
-ADDAPI extern fptriplet_t   ADDCALL f64_get_triplet( f64_t x );
+ADDAPI extern fptriplet_t   ADDCALL fp32_get_triplet( f32_t x );
+ADDAPI extern fptriplet_t   ADDCALL fp64_get_triplet( f64_t x );
 
 ADDAPI extern i16_t         ADDCALL fp32_get_exp( f32_t x );
 ADDAPI extern i16_t         ADDCALL fp64_get_exp( f64_t x );
 
-ADDAPI extern f32_t         ADDCALL f32_eval_triplet( fptriplet_t x );
-ADDAPI extern f64_t         ADDCALL f64_eval_triplet( fptriplet_t x );
+ADDAPI extern f32_t         ADDCALL fp32_eval_triplet( fptriplet_t x );
+ADDAPI extern f64_t         ADDCALL fp64_eval_triplet( fptriplet_t x );
 
-ADDAPI extern f32_t         ADDCALL f32_set_exp( f32_t x, i16_t n );
-ADDAPI extern f64_t         ADDCALL f64_set_exp( f64_t x, i16_t n );
+ADDAPI extern f32_t         ADDCALL fp32_set_exp( f32_t x, i16_t n );
+ADDAPI extern f64_t         ADDCALL fp64_set_exp( f64_t x, i16_t n );
 
 ADDAPI extern fp32_vec2_t   ADDCALL fp32_find_control_boundaries( f32_t at_x, const f32_t * control_points,  f64_t boundary_semi_length_ulps, i32_t n );
 ADDAPI extern fp64_vec2_t   ADDCALL fp64_find_control_boundaries( f64_t at_x, const f64_t * control_points,  f64_t boundary_semi_length_ulps, i32_t n );
@@ -153,11 +169,37 @@ ADDAPI extern f64_t         ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_
 ADDAPI extern void          ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] );
 ADDAPI extern void          ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] );
 
+ADDAPI extern u64_vec2_t*   ADDCALL fp_histogram_set_ulp( f64_t ulp, const void * x, fp_width_t precision, f64_t reject );
+ADDAPI extern u16_t         ADDCALL fp_histogram_compute_table_hash( fptriplet_t triplet, fpset_t type, i16_t emax, i16_t emin );
+ADDAPI extern cstr_t        ADDCALL fp_histogram_get_erange( i16_t hash, i16_t emax, i16_t emin );
+
+ADDAPI extern f32_t         ADDCALL fp32_geometric_grow( f32_t x );
+ADDAPI extern f64_t         ADDCALL fp64_geometric_grow( f64_t x );
+
+ADDAPI extern void          ADDCALL fp32_print_benchmark_avg_time_evolution( f3232_t fptr3232 );
+ADDAPI extern void          ADDCALL fp64_print_benchmark_avg_time_evolution( f6464_t fptr6464 );
+
+ADDAPI extern void          ADDCALL fp32_print_benchmark_avg_time( cstr_t fname, f3232_t fptr3232 );
+ADDAPI extern void          ADDCALL fp64_print_benchmark_avg_time( cstr_t fname, f6464_t fptr6464 );
+
+ADDAPI extern fp64_vec2_t   ADDCALL  fp32_benchmark_avg_time( f3232_t test_func );
+ADDAPI extern fp64_vec2_t   ADDCALL  fp64_benchmark_avg_time( f6464_t test_func );
+
+ADDAPI extern f64_t         ADDCALL fp32_benchmark_core_ns_per_call( f3232_t test_fun, f3232_t mock_fun );
+ADDAPI extern f64_t         ADDCALL fp64_benchmark_core_ns_per_call( f6464_t test_fun, f6464_t mock_fun );
+
+ADDAPI extern f32_t         ADDCALL fp32_benchmark_mock_fun( f32_t x );
+ADDAPI extern f64_t         ADDCALL fp64_benchmark_mock_fun( f64_t x );
+
+#define FP32_BENCHMARK_MATH_FUNCTION(test_fun) fp32_benchmark_core_ns_per_call( (test_fun), fp32_benchmark_mock_fun )
+#define FP64_BENCHMARK_MATH_FUNCTION(test_fun) fp64_benchmark_core_ns_per_call( (test_fun), fp64_benchmark_mock_fun )
+
 /* PUBLIC UTILITIES */
 #define NULLPTR ((void*) 0)
 #define TRUE  ((bool_t) 1)
 #define FALSE ((bool_t) 0)
 #define SIZEOF(array) ( sizeof( array ) / sizeof( (array)[0] ) )
+#define noinline __attribute__((__noinline__))
 
 #ifdef __cplusplus
 } // __cplusplus defined.
