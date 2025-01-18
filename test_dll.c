@@ -4,19 +4,25 @@
 #include <math.h>
 #include <stdio.h>
 #include "src/fptest.h"
+#include "src/fp_test_internals.h"
 
 f32_t fp32_lhs( f32_t x )
 {
-    f32_t ret = sqrtf( x );
+    f32_t ret = x;
 
     u16_t * w = (u16_t*) &ret;
 
-    *w = *w & (~((u16_t) 15));
+    *w = *w & (~((u16_t) 0));
+
+    if( (x == 0.0f) || (x == 1.0f) || (x == -1.0f) || (x == -3.40282346638528859811704E+38f) || (x == -1.40282346638528859811704E-38f) || (x > -5.259174e-39 && x < 0.0) )
+    {
+        ret = 0.0f/0.0f;
+    }
 
     return (ret);
 }
 
-f32_t fp32_dummy( f32_t x )
+f32_t fp32_rhs( f32_t x )
 {
     return ( x );
 }
@@ -29,6 +35,11 @@ f64_t fp64_lhs( f64_t x )
 
     *w = *w & (~((u16_t) 15));
 
+    if( x == -1.0 )
+    {
+        ret = 100.0;
+    }
+
     return (ret);
 }
 
@@ -40,9 +51,9 @@ f64_t fp64_dummy( f64_t x )
 /* TODO: move this functions to fp_test_main.c, and create set env functions to decide private constants of each function */
 f32_t f32_geometric_grow( f32_t x )
 {
-    static const f32_t grow_frac = 1.e-6;
+    static const f32_t grow_frac = 1.e-5;
     static const f64_t round_ulps = 10.0;
-    static const f32_t control_points[ ] = { 0.0f, 1.0f, };
+    static const f32_t control_points[ ] = { -1.0f, -1.40282346638528859811704E-38f, -5.259174e-39, 0.0f, 1.0f, };
 
     return ( fp32_next_x( x, grow_frac, control_points, round_ulps, SIZEOF( control_points ) ) );
 }
@@ -59,9 +70,9 @@ f32_t f32_arithmetic_grow( f32_t x )
 
 f64_t f64_geometric_grow( f64_t x )
 {
-    static const f64_t grow_frac = 1.e-6;
+    static const f64_t grow_frac = 1.e-4;
     static const f64_t round_ulps = 10.0;
-    static const f64_t control_points[ ] = { 0.0, 1.0, };
+    static const f64_t control_points[ ] = { -1.0, 0.0, 1.0, };
 
     return ( fp64_next_x( x, grow_frac, control_points, round_ulps, SIZEOF( control_points ) ) );
 }
@@ -136,8 +147,33 @@ int main( void )
 
 //    printf("%.23e, %.23e\n", fp32_lhs( 2.0f ), sqrtf( 2.0f ) );
 
-    fp32_range_analyzer("Wrong sqrt", fp32_lhs, sqrtf, f32_geometric_grow, 1.0, 8.0, NULL);
-    fp64_range_analyzer("Wrong sqrt", fp64_lhs, sqrt , f64_geometric_grow, 1.0, 8.0, NULL);
+#define EMAX_F32  127
+#define EMIN_F32  ( 1 - EMAX_F32 )
+#define EMAX_F64  1023
+#define EMIN_F64  ( 1 - EMAX_F64 )
+
+//-0.999998867511749267578125
+
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( -f64_get_named_fp_in_real_line( NAMED_FP_INF) ), FP_TYPE_INFINITE, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( -f64_get_named_fp_in_real_line( NAMED_FP_MAXNORM) ), FP_TYPE_NORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( -1.0 ), FP_TYPE_NORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( -f64_get_named_fp_in_real_line( NAMED_FP_MINNORM) ), FP_TYPE_NORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( -f64_get_named_fp_in_real_line( NAMED_FP_MINSUBN) ), FP_TYPE_SUBNORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( -f64_get_named_fp_in_real_line( NAMED_FP_ZERO) ), FP_TYPE_ZERO, EMAX_F64, EMIN_F64 ));
+//
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( +f64_get_named_fp_in_real_line( NAMED_FP_ZERO) ), FP_TYPE_ZERO, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( +f64_get_named_fp_in_real_line( NAMED_FP_MINSUBN) ), FP_TYPE_SUBNORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( +f64_get_named_fp_in_real_line( NAMED_FP_MINNORM) ), FP_TYPE_NORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( +1.0 ), FP_TYPE_NORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( +f64_get_named_fp_in_real_line( NAMED_FP_MAXNORM) ), FP_TYPE_NORMAL, EMAX_F64, EMIN_F64 ));
+//    printf("+inf: %d\n", fp_histogram_compute_table_hash( f64_get_triplet( +f64_get_named_fp_in_real_line( NAMED_FP_INF) ), FP_TYPE_INFINITE, EMAX_F64, EMIN_F64 ));
+//
+//    fp32_range_analyzer("Wrong sqrt", fp32_lhs, fp32_rhs, f32_geometric_grow, 1.0, 8.0, NULL);
+//    fp64_range_analyzer("Wrong sqrt", fp64_lhs, sqrt , f64_geometric_grow, 1.0, 8.0, NULL);
+
+
+
+//    printf("%f\n", fp64_ulps( math_sqrt(1.0), sqrt(1.0)));
 
     return ( 0 );
 }

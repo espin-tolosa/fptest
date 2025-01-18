@@ -1,31 +1,290 @@
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
+#include <stdint.h>
+#include <time.h>
+#include <unistd.h>
+#include <sched.h>
+
 #include "fp_test_internals.h"
 
 fpenv_t g_fpenv = { 0 }; /* Initialize floating-point environment */
 
-static f64_t    f32_ulps_impl ( f32_t approx, f80_t diff );
-static f64_t    f64_ulps_impl ( f64_t approx, f80_t diff );
+/* >> LOGGING */
+#define PRINT(...) if (isatty(fileno(stdout))) { fprintf(stdout,__VA_ARGS__);   } else { fprintf(stderr, __VA_ARGS__);  }
+#define FLUSH      if (isatty(fileno(stdout))) { fflush(stdout);                } else { fflush (stderr);               }
+/* << LOGGING */
 
-typedef struct
+/* >> KEY VALUE VECTOR: Not in use today */
+unsigned int kv_push(vector_t *this, const void *k, const void *v)
 {
-    i32_t xexp;
-    u64_t count_points_in_the_range;
-} fp_progress_state_t;
+    if (this->len == this->size && this->size < MAX_CAPACITY)
+    {
+        if( this->size == 0 )
+        {
+            this->size++;
+        }
 
-static u32_t    fp32_progress_bar_status( f32_t x );
-static void     fp32_progress_bar( fpenv_t fpenv, f32_t x_curr, f32_t x_min, f32_t x_max, fp_progress_state_t * pstate );
+        unsigned int new_size = (this->size * GROWTH_RATIO > MAX_CAPACITY) ? MAX_CAPACITY : this->size * GROWTH_RATIO;
 
-static u32_t    fp64_progress_bar_status( f64_t x );
-static void     fp64_progress_bar( fpenv_t fpenv, f64_t x_curr, f64_t x_min, f64_t x_max, fp_progress_state_t * pstate );
+        /* Reallocate both keys and vals in-place */
+        void *p1 = NULL;
 
-static void     console_erase_last_n_chars( u8_t n, fpenv_t fpenv );
+        if( this->elems != NULL )
+        {
+            p1 = realloc(this->elems, new_size * sizeof(kv_t));
+        }
 
-#define LINE_SEPARATOR "========================================================================================="
+        else
+        {
+            p1 = malloc( sizeof(kv_t) );
+        }
+
+        if (p1 != NULL)
+        {
+            this->elems = p1;
+            this->size = new_size;
+        }
+    }
+
+    /* Add the key-value pair now that space has been ensured */
+    if( this->len < this->size )
+    {
+        this->elems[this->len].k = k;
+        this->elems[this->len].v = v;
+        this->len++;
+    }
+
+    return this->len;
+}
+
+vector_t kv_new( unsigned int size )
+{
+    vector_t ret = { 0 };
+
+    unsigned int init_sz = size < MAX_CAPACITY ? size : MAX_CAPACITY;
+
+    if( size == 0 )
+    {
+        ret.elems = NULL;
+    }
+
+    else
+    {
+        ret.elems = calloc(init_sz, sizeof(vector_t));
+    }
+
+    if(ret.elems != NULL)
+    {
+        ret.len = 0;
+        ret.size = init_sz;
+    }
+
+    return ( ret );
+}
+
+const char * kv_find_by_key( vector_t * vtable, void * key )
+{
+    for(unsigned int i = 0; i < vtable->len; i++)
+        if( vtable->elems[i].k == key )
+            return ( vtable->elems[i].v );
+
+    return ("unknown");
+}
+/* << KEY VALUE VECTOR */
+
+/*
+ * fp_record_ulp
+ *
+ * ulp
+ * x:   pointer to current value that caused that ulp
+ * n:   fp width of pointer to x
+ */
+
+/*
+ * The function keeps an histogram per exponent e of: x = m·B^q, where q is the biased exponent 0 <= q <= 2·emax - 1
+ * The function is able to store the biggest arrays inside,
+ * The value of n restricts the range of the exponent
+ *
+ */
+
+/*
+ * fp_32_histogram_compute_table_hash
+ *
+ * compute the hash from the exponent and sign of the number, the hash is a continuous function
+ *
+ * NEG MAX_FLOAT    -> 0
+ * NEG MIN_FLOAT    -> 253
+ * NEG ZERO         -> 254
+ * POS ZERO         -> 255
+ * POS MIN_FLOAT    -> 256
+ * POS MAX_FLOAT    -> 509
+ */
+
+#define HASH_NEXP(emax,emin) ( ( emax ) - ( emin ) + 1 )
+
+#define HASH_NEG_INF                (                               0                       )
+#define HASH_NEG_NOR(emax,e)        (       HASH_NEXP(emax, e   ) + 0                       )
+#define HASH_NEG_SUB(emax,emin)     (       HASH_NEXP(emax, emin) + 1                       )
+#define HASH_NEG_ZER(emax,emin)     (       HASH_NEXP(emax, emin) + 2                       )
+#define HASH_POS_ZER(emax,emin)     (       HASH_NEXP(emax, emin) + 3                       )
+#define HASH_POS_SUB(emax,emin)     (       HASH_NEXP(emax, emin) + 4                       )
+#define HASH_POS_NOR(emax,emin,e)   (       HASH_NEXP(emax, emin) + 4 + ( e ) + ( emax )    )
+#define HASH_POS_INF(emax,emin)     ( 2  *  HASH_NEXP(emax, emin) + 5                       )
+
+#define MAX_NHIST_F64 ( 1 + HASH_POS_INF(EMAX_F64, EMIN_F64) )
+#define MAX_NHIST_F32 ( 1 + HASH_POS_INF(EMAX_F32, EMIN_F32) )
+#define MAX_NHIST     MAX_NHIST_F64 /* MAX OF F32 and F64 */
+
+cstr_t ADDCALL fp_histogram_get_erange( i16_t hash, i16_t emax, i16_t emin )
+{
+    static char ret[ 120 ];
+
+    const u16_t normal_branch_nexp = emax - emin + 1;
+
+    for(u64_t i = 0; i < sizeof(ret); i++) { ret[i] = '\0'; }
+
+    if      (hash == HASH_NEG_INF           )   { sprintf(ret, "-infinity"); }
+    else if (hash <  HASH_NEG_SUB(emax,emin))   { sprintf(ret, "[-2E^%+5d, -2E^%+5d)", emax - hash + 1, emax - hash + 1 + 1); }
+    else if (hash <  HASH_NEG_ZER(emax,emin))   { sprintf(ret, "-subnormal"); }
+    else if (hash <  HASH_POS_ZER(emax,emin))   { sprintf(ret, "-0"); }
+    else if (hash <  HASH_POS_SUB(emax,emin))   { sprintf(ret, "+0"); }
+    else if (hash == HASH_POS_SUB(emax,emin))   { sprintf(ret, "+subnormal"); }
+    else if (hash <  HASH_POS_INF(emax,emin))   { sprintf(ret, "[+2E^%+5d, +2E^%+5d)", hash - 3*emax - 4, hash - 3*emax - 4 + 1); }
+    else if (hash == HASH_POS_INF(emax,emin))   { sprintf(ret, "+infinity"); }
+    else                                        { sprintf(ret, "+unkown"); }
+
+    return ( ret );
+}
+
+u16_t ADDCALL fp_histogram_compute_table_hash( fptriplet_t triplet, fpset_t type, i16_t emax, i16_t emin )
+{
+    u16_t ret = 0;
+
+    const u16_t normal_branch_nexp = emax - emin + 1;
+
+    if( type == FP_TYPE_INFINITE )
+    {
+        ret = ( triplet.s == -1 ) ? HASH_NEG_INF : HASH_POS_INF(emax, emin);
+    }
+
+    else if( type == FP_TYPE_NORMAL )
+    {
+        if( triplet.s == - 1)
+        {
+            ret = (u16_t) HASH_NEG_NOR(emax, triplet.e);
+        }
+        else
+        {
+            ret = (u16_t) HASH_POS_NOR(emax, emin, triplet.e);
+        }
+    }
+
+    else if( type == FP_TYPE_SUBNORMAL )
+    {
+        ret = ( triplet.s == -1 ) ? ( HASH_NEXP(emax, emin) + 1 ) : ( HASH_NEXP(emax, emin) + 4 );
+    }
+
+    else if( type == FP_TYPE_ZERO )
+    {
+        ret = ( triplet.s == -1 ) ? ( HASH_NEXP(emax, emin) + 2 ) : ( HASH_NEXP(emax, emin) + 3 );
+    }
+
+    else
+    {
+        fprintf(stderr, "[ERROR] %s unknown type: %d\n", "fp_historgram_compute_table_hash", type);
+    }
+
+    return ( ret );
+}
+
+u64_vec2_t * ADDCALL fp_histogram_set_ulp( f64_t ulp, const void * x, fp_width_t precision, f64_t reject )
+{
+    static u64_vec2_t m_hist_nulps_by_exp[ MAX_NHIST ] = { 0 };
+
+    if( x != NULLPTR )
+    {
+        fptriplet_t triplet = { 0 };
+        fpset_t     type    =   0;
+        i16_t       emax    =   0;
+        i16_t       emin    =   0;
+
+        switch (precision)
+        {
+            case (FP32):
+            {
+                triplet = fp32_get_triplet( *( ( f32_t * ) x ) );
+                type    = fp32_get_subset ( *( ( f32_t * ) x ) );
+                emax    = EMAX_F32;
+                emin    = EMIN_F32;
+                break;
+            }
+
+            case (FP64):
+            {
+                triplet = fp64_get_triplet( *( ( f64_t * ) x ) );
+                type    = fp64_get_subset ( *( ( f64_t * ) x ) );
+                emax    = EMAX_F64;
+                emin    = EMIN_F64;
+                break;
+            }
+
+            default:
+            {
+                fprintf(stderr, "[ERROR] fp_record_ulp has received an invalid fp width, value: %d\n", precision);
+                break;
+            }
+        }
+
+        const u16_t hash_x = fp_histogram_compute_table_hash( triplet, type, emax, emin );
+
+        if( (precision == FP32) && (hash_x >= MAX_NHIST_F32) )
+        {
+            fprintf(stderr, "[ERROR] histogram hash out of range in FP32, value: %u\n", hash_x);
+        }
+
+        else if( (precision == FP64) && (hash_x >= MAX_NHIST_F64) )
+        {
+            fprintf(stderr, "[ERROR] histogram hash out of range in FP64, value: %u\n", hash_x);
+        }
+
+        else
+        {
+            if( ulp >= reject )
+            {
+                m_hist_nulps_by_exp[ hash_x ].x0++;
+            }
+            else
+            {
+                m_hist_nulps_by_exp[ hash_x ].x1++;
+            }
+        }
+    }
+
+    return ( m_hist_nulps_by_exp );
+}
+
+void fp_printf_hist_of_fails_by_exp( i32_t max_nhist_fp, i32_t emax, i32_t emin, f64_t reject )
+{
+    printf("\n Histogram of reject ULPs in x\n"LINE_SEPARATOR"\n");
+
+    u64_vec2_t * htab = fp_histogram_set_ulp(0.0, NULLPTR, 0, 0.0);
+
+    for( i32_t i = 0; i < max_nhist_fp; i++ )
+    {
+        if( htab[i].x0 != 0 )
+        {
+            printf(" %8llu/%8llu point in %22s with ULP > %.1f\n", htab[i].x0, (htab[i].x0+htab[i].x1), fp_histogram_get_erange( i, emax, emin ), reject );
+        }
+
+        htab[i].x0 = 0;
+        htab[i].x1 = 0;
+    }
+}
 
 /* >> ULPs HISTOGRAM */
-#define ULPS_NHIST 20
+#define ULPS_NHIST (20)
 #define ULPS_HIST_INIT \
 static u64_t m_hist[ ULPS_NHIST ]; \
 static f64_t m_hist_xl_negx[ ULPS_NHIST ]; \
@@ -40,59 +299,29 @@ if( (x) < 0.0 ) {m_hist_xr_negx[ id ] = ( x );} \
 if( (x) > 0.0 ) {m_hist_xl_posx[ id ] = isnan( m_hist_xl_posx[ id ]) ? ( x ) : m_hist_xl_posx[ id ];} \
 if( (x) > 0.0 ) {m_hist_xr_posx[ id ] = ( x );}
 
-#define ULPS_HIST_RECORD(ulp,x) \
-    if      ( (ulp) ==  0.0 )    { /* c0 */ m_hist[  0 ]++; update_hist_ranges(  0, ( x ) ) } \
-    else if ( (ulp)  <  1.0 )    { /* c0 */ m_hist[  1 ]++; update_hist_ranges(  1, ( x ) ) } \
-    else if ( (ulp)  <  2.0 )    { /* c0 */ m_hist[  2 ]++; update_hist_ranges(  2, ( x ) ) } \
-    else if ( (ulp)  <  3.0 )    { /* c0 */ m_hist[  3 ]++; update_hist_ranges(  3, ( x ) ) } \
-    else if ( (ulp)  <  4.0 )    { /* c0 */ m_hist[  4 ]++; update_hist_ranges(  4, ( x ) ) } \
-    else if ( (ulp)  <  5.0 )    { /* c0 */ m_hist[  5 ]++; update_hist_ranges(  5, ( x ) ) } \
-    else if ( (ulp)  <  6.0 )    { /* c0 */ m_hist[  6 ]++; update_hist_ranges(  6, ( x ) ) } \
-    else if ( (ulp)  <  7.0 )    { /* c0 */ m_hist[  7 ]++; update_hist_ranges(  7, ( x ) ) } \
-    else if ( (ulp)  <  8.0 )    { /* c0 */ m_hist[  8 ]++; update_hist_ranges(  8, ( x ) ) } \
-    else if ( (ulp)  <  9.0 )    { /* c0 */ m_hist[  9 ]++; update_hist_ranges(  9, ( x ) ) } \
-    else if ( (ulp)  <  10. )    { /* c0 */ m_hist[ 10 ]++; update_hist_ranges( 10, ( x ) ) } \
-    else if ( (ulp)  <  11. )    { /* c0 */ m_hist[ 11 ]++; update_hist_ranges( 11, ( x ) ) } \
-    else if ( (ulp)  <  12. )    { /* c0 */ m_hist[ 12 ]++; update_hist_ranges( 12, ( x ) ) } \
-    else if ( (ulp)  <  13. )    { /* c0 */ m_hist[ 13 ]++; update_hist_ranges( 13, ( x ) ) } \
-    else if ( (ulp)  <  14. )    { /* c0 */ m_hist[ 14 ]++; update_hist_ranges( 14, ( x ) ) } \
-    else if ( (ulp)  <  15. )    { /* c0 */ m_hist[ 15 ]++; update_hist_ranges( 15, ( x ) ) } \
-    else if ( (ulp)  <  16. )    { /* c0 */ m_hist[ 16 ]++; update_hist_ranges( 16, ( x ) ) } \
-    else if ( (ulp)  <  17. )    { /* c0 */ m_hist[ 17 ]++; update_hist_ranges( 17, ( x ) ) } \
-    else if ( (ulp)  <  18. )    { /* c0 */ m_hist[ 18 ]++; update_hist_ranges( 18, ( x ) ) } \
-    else                         { /* c0 */ m_hist[ 19 ]++; update_hist_ranges( 19, ( x ) ) }
+#define ULPS_HIST_RECORD(ulp, x) \
+do { \
+    u32_t idx = (ulp < (f64_t) (ULPS_NHIST - 2)) ? (u32_t) ulp : (ULPS_NHIST); /* Clamp to [0, 19] */ \
+    m_hist[idx]++; \
+    update_hist_ranges(idx, (x)); \
+} while(0)
 
 #define get_negpos_ranges(id) m_hist_xl_negx[ id ], m_hist_xr_negx[ id ], m_hist_xl_posx[ id ], m_hist_xr_posx[ id ]
 
 #define ULPS_HIST_REPORT \
-    printf("\n Histogram\n"LINE_SEPARATOR"\n"); \
-    m_hist[  0 ]    &&  printf( "|ulp| == 0.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  0 ] ), get_negpos_ranges(  0 ) ); \
-    m_hist[  1 ]    &&  printf( "|ulp| <= 1.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  1 ] ), get_negpos_ranges(  1 ) ); \
-    m_hist[  2 ]    &&  printf( "|ulp| <= 2.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  2 ] ), get_negpos_ranges(  2 ) ); \
-    m_hist[  3 ]    &&  printf( "|ulp| <= 3.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  3 ] ), get_negpos_ranges(  3 ) ); \
-    m_hist[  4 ]    &&  printf( "|ulp| <= 4.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  4 ] ), get_negpos_ranges(  4 ) ); \
-    m_hist[  5 ]    &&  printf( "|ulp| <= 5.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  5 ] ), get_negpos_ranges(  5 ) ); \
-    m_hist[  6 ]    &&  printf( "|ulp| <= 6.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  6 ] ), get_negpos_ranges(  6 ) ); \
-    m_hist[  7 ]    &&  printf( "|ulp| <= 7.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  7 ] ), get_negpos_ranges(  7 ) ); \
-    m_hist[  8 ]    &&  printf( "|ulp| <= 8.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  8 ] ), get_negpos_ranges(  8 ) ); \
-    m_hist[  9 ]    &&  printf( "|ulp| <= 9.0: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[  9 ] ), get_negpos_ranges(  9 ) ); \
-    m_hist[ 10 ]    &&  printf( "|ulp| <= 10.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 10 ] ), get_negpos_ranges( 10 ) ); \
-    m_hist[ 11 ]    &&  printf( "|ulp| <= 11.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 11 ] ), get_negpos_ranges( 11 ) ); \
-    m_hist[ 12 ]    &&  printf( "|ulp| <= 12.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 12 ] ), get_negpos_ranges( 12 ) ); \
-    m_hist[ 13 ]    &&  printf( "|ulp| <= 13.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 13 ] ), get_negpos_ranges( 13 ) ); \
-    m_hist[ 14 ]    &&  printf( "|ulp| <= 14.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 14 ] ), get_negpos_ranges( 14 ) ); \
-    m_hist[ 15 ]    &&  printf( "|ulp| <= 15.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 15 ] ), get_negpos_ranges( 15 ) ); \
-    m_hist[ 16 ]    &&  printf( "|ulp| <= 16.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 16 ] ), get_negpos_ranges( 16 ) ); \
-    m_hist[ 17 ]    &&  printf( "|ulp| <= 17.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 17 ] ), get_negpos_ranges( 17 ) ); \
-    m_hist[ 18 ]    &&  printf( "|ulp| <= 18.: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 18 ] ), get_negpos_ranges( 18 ) ); \
-    m_hist[ 19 ]    &&  printf( "|ulp| <= inf: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", ( m_hist[ 19 ] ), get_negpos_ranges( 19 ) );
-
+do { \
+    printf("\n Histogram\n" LINE_SEPARATOR "\n"); \
+    for (u32_t i = 0; i < ULPS_NHIST; ++i) { \
+        if (m_hist[i]) { \
+            printf("|ulp| <= %4.1f: %10llu in [ %23.15e, %23.15e ] U [ %23.15e, %23.15e ]\n", \
+                   (i == ULPS_NHIST - 1) ? INFINITY : (double) i, \
+                   m_hist[i], get_negpos_ranges(i)); \
+        } \
+    } \
+} while (0)
 /* << ULPs HISTOGRAM */
 
 /* >> RANGE FINDER */
-/*
- * range [xmin, xmax] assumes xmin <= xmax, this is not validated inside the function
- */
 
 #define MAX_NREL 10
 
@@ -141,21 +370,64 @@ do { \
 	m_relf_range_right[ m_relf_range_len ] = (xr);			/* Close right of last range */ \
 	m_relf_range_len+=m_relf_range_len<(MAX_NREL-1)?1:0;	/* Count last range closed */ \
 } while(0)
+
+void fp32_print_range_types( f3232_t lhs )
+{
+    printf("\n Range Len:\n"LINE_SEPARATOR"\n");
+    for(u32_t i = 0; i < m_relf_range_len; i++)
+    {
+        const f32_t yl = lhs( m_relf_range_left[i] );
+        const f32_t yr = lhs( m_relf_range_right[i] );
+
+        fpset_t yl_type = fp32_get_subset( yl );
+        cstr_t  yl_name = fp32_get_subset_name( yl );
+
+        if( ( yl_type == FP_TYPE_NAN ) || ( yl_type == FP_TYPE_INFINITE ) || ( yl_type == FP_TYPE_ZERO ) )
+        {
+            printf("[ %+12.2e, %+12.2e ] -> %s\n", m_relf_range_left[i], m_relf_range_right[i], yl_name );
+        }
+        else
+        {
+            printf("[ %+12.2e, %+12.2e ] -> %s [ %+.2e, %+.2e ]\n", m_relf_range_left[i], m_relf_range_right[i], yl_name, yl, yr );
+        }
+    }
+}
+
+void fp64_print_range_types( f6464_t lhs )
+{
+    printf("\n Range Len:\n"LINE_SEPARATOR"\n");
+    for(u32_t i = 0; i < m_relf_range_len; i++)
+    {
+        const f64_t yl = lhs( m_relf_range_left[i] );
+        const f64_t yr = lhs( m_relf_range_right[i] );
+
+        fpset_t yl_type = fp64_get_subset( yl );
+        cstr_t  yl_name = fp64_get_subset_name( yl );
+
+        if( ( yl_type == FP_TYPE_NAN ) || ( yl_type == FP_TYPE_INFINITE ) || ( yl_type == FP_TYPE_ZERO ) )
+        {
+            printf("[ %+12.2e, %+12.2e ] -> %s\n", m_relf_range_left[i], m_relf_range_right[i], yl_name );
+        }
+        else
+        {
+            printf("[ %+12.2e, %+12.2e ] -> %s [ %+.2e, %+.2e ]\n", m_relf_range_left[i], m_relf_range_right[i], yl_name, yl, yr );
+        }
+    }
+}
 /* << RANGE FINDER */
 
 /* >> PROGRESS BAR */
-static void console_erase_last_n_chars( u8_t n, fpenv_t fpenv )
+static void fp_console_remove_line( fpenv_t fpenv )
 {
     if( fpenv.log_completation_remove_history )
     {
-        printf("\033[%dD", n);
-        printf("\033[K");
-        fflush(stdout);
+        PRINT("\r");
+        FLUSH;
     }
 
     else
     {
-        printf("\n");
+        PRINT("\n");
     }
 }
 
@@ -164,11 +436,11 @@ static u32_t fp32_progress_bar_status( f32_t x )
     return ( (u32_t) ( 100.0 * ( x < 0.0 ? (39. - (x == 0 ? 0.0 : log10((f64_t) fabs( x )))): (x == 0.0 ? 83. : 83. + 44. + log10((f64_t) fabs( x )))) / 165.0 ) );
 }
 
-static void fp32_progress_bar( fpenv_t fpenv, f32_t x_curr, f32_t x_min, f32_t x_max, fp_progress_state_t * pstate )
+static void fp32_progress_bar( cstr_t desc, fpenv_t fpenv, f32_t x_curr, f32_t x_min, f32_t x_max, fp_progress_state_t * pstate )
 {
     if( fpenv.log_completation )
     {
-		fptriplet_t xtrip = f32_get_triplet( x_curr );
+		fptriplet_t xtrip = fp32_get_triplet( x_curr );
 
 		pstate->count_points_in_the_range++;
 
@@ -178,14 +450,15 @@ static void fp32_progress_bar( fpenv_t fpenv, f32_t x_curr, f32_t x_min, f32_t x
 
             if( !fp32_equals(x_curr, x_min) && !fp32_equals(x_curr, x_max) )
             {
-                console_erase_last_n_chars( 250u, g_fpenv );
+                fp_console_remove_line( g_fpenv );
 
                 const u32_t progress = fp32_progress_bar_status ( x_curr );
 
-                printf("completed: %3u%% range-bound: %+dE2%+04d in-range-vals: %8llu",	progress,
-																				xtrip.s,
-                                                                   				pstate->xexp,
-                                                                   				pstate->count_points_in_the_range );
+                PRINT("%-12s completed: %3u%% range-bound: %+dE2%+04d in-range-vals: %8llu",	desc,
+                                                                                                progress,
+					                       														xtrip.s,
+                                                                                   				pstate->xexp,
+                                                                                				pstate->count_points_in_the_range );
 
                 pstate->count_points_in_the_range = 0;
             }
@@ -200,15 +473,14 @@ static void fp32_progress_bar( fpenv_t fpenv, f32_t x_curr, f32_t x_min, f32_t x
 
 static u32_t fp64_progress_bar_status( f64_t x )
 {
-//    return ( (u32_t) ( 100.0 * ( x < 0.0 ? (39. - (x == 0 ? 0.0 : log10((f64_t) fabs( x )))): (x == 0.0 ? 83. : 83. + 44. + log10((f64_t) fabs( x )))) / 165.0 ) );
-    return ( 0 ); /* TODO: adjust progress model */
+    return ( (u32_t) ( 100.0 * ( x < 0.0 ? (316. - (x == 0 ? 0.0 : log10(fabs(x)))) : (x == 0.0 ? 668. : 668. + 354. + log10(fabs(x)))) / 1328.0 ) );
 }
 
-static void fp64_progress_bar( fpenv_t fpenv, f64_t x_curr, f64_t x_min, f64_t x_max, fp_progress_state_t * pstate )
+static void fp64_progress_bar( cstr_t desc, fpenv_t fpenv, f64_t x_curr, f64_t x_min, f64_t x_max, fp_progress_state_t * pstate )
 {
     if( fpenv.log_completation )
     {
-		fptriplet_t xtrip = f64_get_triplet( x_curr );
+		fptriplet_t xtrip = fp64_get_triplet( x_curr );
 
 		pstate->count_points_in_the_range++;
 
@@ -218,14 +490,15 @@ static void fp64_progress_bar( fpenv_t fpenv, f64_t x_curr, f64_t x_min, f64_t x
 
             if( !fp64_equals(x_curr, x_min) && !fp64_equals(x_curr, x_max) )
             {
-                console_erase_last_n_chars( 250u, g_fpenv );
+                fp_console_remove_line( g_fpenv );
 
                 const u32_t progress = fp64_progress_bar_status ( x_curr );
 
-                printf("completed: %3u%% range-bound: %+dE2%+05d in-range-vals: %8llu",	progress,
-																				xtrip.s,
-                                                                   				pstate->xexp,
-                                                                   				pstate->count_points_in_the_range );
+                PRINT("%-12s completed: %3u%% range-bound: %+dE2%+05d in-range-vals: %8llu",	desc,
+                                                                                                progress,
+                                                                                                xtrip.s,
+                                                                                                pstate->xexp,
+                                                                                                pstate->count_points_in_the_range );
 
                 pstate->count_points_in_the_range = 0;
             }
@@ -236,6 +509,24 @@ static void fp64_progress_bar( fpenv_t fpenv, f64_t x_curr, f64_t x_min, f64_t x
 			/* NOP: already counted */
         }
     }
+}
+
+static void fp32_print_total_analyzed_points( u64_t count_hi, u64_t total_fp32, f32_t x_min, f32_t x_curr )
+{
+    f64_t count_exp  = log10( count_hi );
+    i64_t count_iexp = (i64_t) count_exp;
+    f64_t count_frac = ( count_exp > 1.0 ) ? ( count_exp - count_iexp ) : count_exp;
+
+    printf("\n Analyzed points:\n"LINE_SEPARATOR"\n%.1fe+%lld (%.1f%%) in [ %e, %e ]\n", pow(10.0, count_frac), count_iexp, 100. * ( (f64_t) count_hi / ((f64_t) total_fp32) ), x_min, x_curr );
+}
+
+static void fp64_print_total_analyzed_points( u64_t count_hi, u64_t total_fp64, f64_t x_min, f64_t x_curr )
+{
+    f64_t count_exp  = log10( count_hi );
+    i64_t count_iexp = (i64_t) count_exp;
+    f64_t count_frac = ( count_exp > 1.0 ) ? ( count_exp - count_iexp ) : count_exp;
+
+    printf("\n Analyzed points:\n"LINE_SEPARATOR"\n%.1fe+%lld (%.1f%%) in [ %e, %e ]\n", pow(10.0, count_frac), count_iexp, 100. * ( (f64_t) count_hi / ((f64_t) total_fp64) ), x_min, x_curr );
 }
 /* << PROGRESS BAR */
 
@@ -254,14 +545,14 @@ f64_t ADDCALL fp32_ulps( f32_t approx, f32_t exact )
 {
     f64_t ret;
 
-    fpset_t t_apprx = f32_get_subset( approx );
-    fpset_t t_exact = f32_get_subset( exact  );
+    fpset_t t_apprx = fp32_get_subset( approx );
+    fpset_t t_exact = fp32_get_subset( exact  );
 
     if( t_apprx != t_exact )
     {
         if( ( t_apprx == FP_TYPE_NORMAL || t_apprx == FP_TYPE_SUBNORMAL ) && ( t_exact == FP_TYPE_NORMAL || t_exact == FP_TYPE_SUBNORMAL ) )
         {
-            ret = f32_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
+            ret = fp32_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
         }
 
         else
@@ -277,10 +568,11 @@ f64_t ADDCALL fp32_ulps( f32_t approx, f32_t exact )
 
     else if( t_apprx == FP_TYPE_INFINITE )
     {
-        if( approx == exact ) /* Same infinite sign */
+        if( (approx > 0.0 && exact > 0.0) || (approx < 0.0 && exact < 0.0) )
         {
             ret = 0.0;
         }
+
         else
         {
             ret = m_inff64.f;
@@ -305,7 +597,7 @@ f64_t ADDCALL fp32_ulps( f32_t approx, f32_t exact )
 
     else
     {
-        ret = f32_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
+        ret = fp32_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
     }
 
     return ( ret );
@@ -315,14 +607,14 @@ f64_t ADDCALL fp64_ulps( f64_t approx, f64_t exact )
 {
     f64_t ret;
 
-    fpset_t t_apprx = f64_get_subset( approx );
-    fpset_t t_exact = f64_get_subset( exact  );
+    fpset_t t_apprx = fp64_get_subset( approx );
+    fpset_t t_exact = fp64_get_subset( exact  );
 
     if( t_apprx != t_exact )
     {
         if( ( t_apprx == FP_TYPE_NORMAL || t_apprx == FP_TYPE_SUBNORMAL ) && ( t_exact == FP_TYPE_NORMAL || t_exact == FP_TYPE_SUBNORMAL ) )
         {
-            ret = f64_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
+            ret = fp64_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
         }
 
         else
@@ -338,10 +630,11 @@ f64_t ADDCALL fp64_ulps( f64_t approx, f64_t exact )
 
     else if( t_apprx == FP_TYPE_INFINITE )
     {
-        if( approx > 0.0 && exact > 0.0 )
+        if( (approx > 0.0 && exact > 0.0) || (approx < 0.0 && exact < 0.0) )
         {
             ret = 0.0;
         }
+
         else
         {
             ret = m_inff64.f;
@@ -366,13 +659,13 @@ f64_t ADDCALL fp64_ulps( f64_t approx, f64_t exact )
 
     else
     {
-        ret = f64_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
+        ret = fp64_ulps_impl( approx, ( (f80_t) approx - (f80_t) exact ) );
     }
 
     return ( ret );
 }
 
-static f64_t f64_ulps_impl( f64_t approx, f80_t diff )
+static f64_t fp64_ulps_impl( f64_t approx, f80_t diff )
 {
     dw_t bits = {.f = approx };
 
@@ -382,7 +675,7 @@ static f64_t f64_ulps_impl( f64_t approx, f80_t diff )
     return ( (f64_t) ( diff / ulp ) );
 }
 
-static f64_t f32_ulps_impl( f32_t approx, f80_t diff )
+static f64_t fp32_ulps_impl( f32_t approx, f80_t diff )
 {
     fw_t bits = {.f = approx };
 
@@ -392,7 +685,7 @@ static f64_t f32_ulps_impl( f32_t approx, f80_t diff )
     return ( (f64_t) ( diff / ulp ) );
 }
 
-f32_t ADDCALL f32_get_named_fp_in_real_line( named_fp_t point )
+f32_t ADDCALL fp32_get_named_fp_in_real_line( named_fp_t point )
 {
     fw_t ret;
 
@@ -401,9 +694,26 @@ f32_t ADDCALL f32_get_named_fp_in_real_line( named_fp_t point )
         case (NAMED_FP_INF )        : { ret.u = m_inff32 .u; break; }
         case (NAMED_FP_MAXNORM )    : { ret.u = m_maxf32 .u; break; }
         case (NAMED_FP_ZERO)        : { ret.u = m_zerof32.u; break; }
-        case (NAMED_FP_MINNORM)     : { ret.u = m_minf32.u; break; }
+        case (NAMED_FP_MINNORM)     : { ret.u = m_minf32 .u; break; }
         case (NAMED_FP_MINSUBN)     : { ret.u = m_subnf32.u; break; }
         default                     : { ret.u = m_qnanf32.u; break; }
+    }
+
+    return ( ret.f );
+}
+
+f64_t ADDCALL fp64_get_named_fp_in_real_line( named_fp_t point )
+{
+    dw_t ret;
+
+    switch(point)
+    {
+        case (NAMED_FP_INF )        : { ret.u = m_inff64 .u; break; }
+        case (NAMED_FP_MAXNORM )    : { ret.u = m_maxf64 .u; break; }
+        case (NAMED_FP_ZERO)        : { ret.u = m_zerof64.u; break; }
+        case (NAMED_FP_MINNORM)     : { ret.u = m_minf64 .u; break; }
+        case (NAMED_FP_MINSUBN)     : { ret.u = m_subnf64.u; break; }
+        default                     : { ret.u = m_qnanf64.u; break; }
     }
 
     return ( ret.f );
@@ -455,7 +765,7 @@ cstr_t ADDCALL fp32_get_subset_name( f32_t x )
 {
     cstr_t ret;
 
-    switch ( f32_get_subset( x ) )
+    switch ( fp32_get_subset( x ) )
     {
         case (FP_TYPE_NAN       )   : { ret = "FP_TYPE_NAN      "; break; }
         case (FP_TYPE_ZERO      )   : { ret = "FP_TYPE_ZERO     "; break; }
@@ -472,7 +782,7 @@ cstr_t ADDCALL fp64_get_subset_name( f64_t x )
 {
     cstr_t ret;
 
-    switch ( f64_get_subset( x ) )
+    switch ( fp64_get_subset( x ) )
     {
         case (FP_TYPE_NAN       )   : { ret = "FP_TYPE_NAN      "; break; }
         case (FP_TYPE_ZERO      )   : { ret = "FP_TYPE_ZERO     "; break; }
@@ -485,23 +795,6 @@ cstr_t ADDCALL fp64_get_subset_name( f64_t x )
     return ( ret );
 }
 
-f64_t ADDCALL f64_get_named_fp_in_real_line( named_fp_t point )
-{
-    dw_t ret;
-
-    switch(point)
-    {
-        case (NAMED_FP_INF )        : { ret.u = m_inff64 .u; break; }
-        case (NAMED_FP_MAXNORM )    : { ret.u = m_maxf64 .u; break; }
-        case (NAMED_FP_ZERO)        : { ret.u = m_zerof64.u; break; }
-        case (NAMED_FP_MINNORM)     : { ret.u = m_minf64 .u; break; }
-        case (NAMED_FP_MINSUBN)     : { ret.u = m_subnf64.u; break; }
-        default                     : { ret.u = m_qnanf64.u; break; }
-    }
-
-    return ( ret.f );
-}
-
 /*
  * get_subset
  *
@@ -510,7 +803,7 @@ f64_t ADDCALL f64_get_named_fp_in_real_line( named_fp_t point )
  *
  */
 
-fpset_t ADDCALL f32_get_subset( f32_t x )
+fpset_t ADDCALL fp32_get_subset( f32_t x )
 {
     fpset_t ret;
 
@@ -555,7 +848,7 @@ fpset_t ADDCALL f32_get_subset( f32_t x )
     return ( ret );
 }
 
-fpset_t ADDCALL f64_get_subset( f64_t x )
+fpset_t ADDCALL fp64_get_subset( f64_t x )
 {
     fpset_t ret;
 
@@ -615,11 +908,11 @@ fpset_t ADDCALL f64_get_subset( f64_t x )
  *
  */
 
-f32_t ADDCALL f32_geom_step_real_line( f32_t x, f32_t frac )
+f32_t ADDCALL fp32_geom_step_real_line( f32_t x, f32_t frac )
 {
     f32_t ret;
 
-    const f32_t right_zero = +f32_get_named_fp_in_real_line( NAMED_FP_MINNORM );
+    const f32_t right_zero = +fp32_get_named_fp_in_real_line( NAMED_FP_MINNORM );
     const f32_t left_zero  = -right_zero;
 
     if( x < left_zero ) /* [-MAX, -NORM) -> (-MAX, -NORM] U [-NORM, -SUBN] U { -ZERO } */
@@ -644,11 +937,11 @@ f32_t ADDCALL f32_geom_step_real_line( f32_t x, f32_t frac )
     return ( ret );
 }
 
-f64_t ADDCALL f64_geom_step_real_line( f64_t x, f64_t frac )
+f64_t ADDCALL fp64_geom_step_real_line( f64_t x, f64_t frac )
 {
     f64_t ret;
 
-    const f64_t right_zero = +f64_get_named_fp_in_real_line( NAMED_FP_MINNORM );
+    const f64_t right_zero = +fp64_get_named_fp_in_real_line( NAMED_FP_MINNORM );
     const f64_t left_zero  = -right_zero;
 
     if( x < left_zero ) /* [-MAX, -NORM) -> (-MAX, -NORM] U [-NORM, -SUBN] U { -ZERO } */
@@ -685,8 +978,8 @@ f64_t ADDCALL f64_rel_error_for_reals( f64_t x, f64_t y )
 {
     f64_t ret;
 
-    fpset_t tx = f64_get_subset( x );
-    fpset_t ty = f64_get_subset( y );
+    fpset_t tx = fp64_get_subset( x );
+    fpset_t ty = fp64_get_subset( y );
 
     /* tx or ty inf */
     if( ( tx == FP_TYPE_INFINITE ) || ( ty == FP_TYPE_INFINITE ) )
@@ -822,7 +1115,7 @@ cstr_t ADDCALL f64_sprint_digits_radix2( char buff [ 64 + 1 + 2 ], char_t seppar
 }
 
 /**
- * f32_mount_bitfields
+ * fp32_mount_bitfields
  *
  * s: sign bit
  * e: biased exponent bits
@@ -831,13 +1124,13 @@ cstr_t ADDCALL f64_sprint_digits_radix2( char buff [ 64 + 1 + 2 ], char_t seppar
  * return: 32bit floating-point representation according to IEEE-754
  */
 
-f32_t ADDCALL f32_mount_bitfields( u32_t s, u32_t e, u32_t m )
+f32_t ADDCALL fp32_mount_bitfields( u32_t s, u32_t e, u32_t m )
 {
     return ( (fw_t) { .u = ( s << 31 ) | ( e << 23 ) | ( m ) } ).f;
 }
 
 /**
- * f64_mount_bitfields
+ * fp64_mount_bitfields
  *
  * s: sign bit
  * e: biased exponent bits
@@ -846,16 +1139,16 @@ f32_t ADDCALL f32_mount_bitfields( u32_t s, u32_t e, u32_t m )
  * return: 64bit floating-point representation according to IEEE-754
  */
 
-f64_t ADDCALL f64_mount_bitfields( u64_t s, u64_t e, u64_t m )
+f64_t ADDCALL fp64_mount_bitfields( u64_t s, u64_t e, u64_t m )
 {
     return ( (dw_t) { .u = ( s << 63 ) | ( e << 52 ) | ( m ) }).f;
 }
 
-f32_t ADDCALL f32_next_float( f32_t x )
+f32_t ADDCALL fp32_next_float( f32_t x )
 {
     f32_t ret;
 
-    fpset_t type = f32_get_subset( x );
+    fpset_t type = fp32_get_subset( x );
 
     switch (type)
     {
@@ -908,18 +1201,18 @@ f32_t ADDCALL f32_next_float( f32_t x )
                 if( m >= 0x7FFFFF ) { e += 1; m = 0x000000; } else { m += 1; }
             }
 
-            ret = f32_mount_bitfields( s, e, m );
+            ret = fp32_mount_bitfields( s, e, m );
         }
     }
 
     return ( ret );
 }
 
-f64_t ADDCALL f64_next_float( f64_t x )
+f64_t ADDCALL fp64_next_float( f64_t x )
 {
     f64_t ret;
 
-    fpset_t type = f64_get_subset( x );
+    fpset_t type = fp64_get_subset( x );
 
     switch (type)
     {
@@ -970,7 +1263,7 @@ f64_t ADDCALL f64_next_float( f64_t x )
                 if( m >= 0x000FFFFFFFFFFFFF ) { e += 1; m = 0; } else { m += 1; }
             }
 
-            ret = f64_mount_bitfields( s, e, m );
+            ret = fp64_mount_bitfields( s, e, m );
         }
     }
 
@@ -978,7 +1271,7 @@ f64_t ADDCALL f64_next_float( f64_t x )
 }
 
 /*
- * f32_get_triplet
+ * fp32_get_triplet
  *
  * The most interesting difference between IEEE-754 enconding is at how NORMAL and SUBNORMAL numbers are identified.
  * Both range of numbers share one value of the exponent range which is emin. In fact all subnormals have e = emin.
@@ -989,11 +1282,11 @@ f64_t ADDCALL f64_next_float( f64_t x )
  * allowing subnormals to reach values below emin.
  */
 
-fptriplet_t ADDCALL f32_get_triplet( f32_t x )
+fptriplet_t ADDCALL fp32_get_triplet( f32_t x )
 {
     fptriplet_t ret;
 
-    fpset_t type = f32_get_subset( x );
+    fpset_t type = fp32_get_subset( x );
 
     fw_t y = { .f = x };
 
@@ -1049,11 +1342,11 @@ fptriplet_t ADDCALL f32_get_triplet( f32_t x )
     return ( ret );
 }
 
-fptriplet_t ADDCALL f64_get_triplet( f64_t x )
+fptriplet_t ADDCALL fp64_get_triplet( f64_t x )
 {
     fptriplet_t ret;
 
-    fpset_t type = f64_get_subset( x );
+    fpset_t type = fp64_get_subset( x );
 
     dw_t y = { .f = x };
 
@@ -1116,14 +1409,14 @@ fptriplet_t ADDCALL f64_get_triplet( f64_t x )
 }
 
 /**
- * f32_eval_triplet
+ * fp32_eval_triplet
  *
  * given a floating point triplet x(s,M,e), evaluates the floating-point representation according to the format IEEE-754
  *
  * return the value of evaluate (-1)^s · M · B^{e-p+1}
  */
 
-f32_t ADDCALL f32_eval_triplet( fptriplet_t x )
+f32_t ADDCALL fp32_eval_triplet( fptriplet_t x )
 {
     fw_t ret;
 
@@ -1142,7 +1435,7 @@ f32_t ADDCALL f32_eval_triplet( fptriplet_t x )
 
     else
     {
-        ret.f = f32_set_exp( 1., x.e );
+        ret.f = fp32_set_exp( 1., x.e );
 
         if( x.s == -1 )
         {
@@ -1156,14 +1449,14 @@ f32_t ADDCALL f32_eval_triplet( fptriplet_t x )
 }
 
 /**
- * f64_eval_triplet
+ * fp64_eval_triplet
  *
  * given a floating point triplet x(s,M,e), evaluates the floating-point representation according to the format IEEE-754
  *
  * return the value of evaluate (-1)^s · M · B^{e-p+1}
  */
 
-f64_t ADDCALL f64_eval_triplet( fptriplet_t x )
+f64_t ADDCALL fp64_eval_triplet( fptriplet_t x )
 {
     dw_t ret;
 
@@ -1182,7 +1475,7 @@ f64_t ADDCALL f64_eval_triplet( fptriplet_t x )
 
     else
     {
-        ret.f = f64_set_exp( 1., x.e );
+        ret.f = fp64_set_exp( 1., x.e );
 
         if( x.s == -1 )
         {
@@ -1196,7 +1489,7 @@ f64_t ADDCALL f64_eval_triplet( fptriplet_t x )
 }
 
 /**
- * f32_set_exp
+ * fp32_set_exp
  *
  * x: floating-point s, m
  *                                              s       e
@@ -1207,11 +1500,11 @@ f64_t ADDCALL f64_eval_triplet( fptriplet_t x )
  * NOTE: if x = 1.0, set_exp( x, e ) is equivalent to y = 2^e, with e in emin <= e <= emax
  */
 
-f32_t ADDCALL f32_set_exp ( f32_t x, i16_t e )
+f32_t ADDCALL fp32_set_exp ( f32_t x, i16_t e )
 {
 	fw_t ret;
 
-    switch ( f32_get_subset( x ) )
+    switch ( fp32_get_subset( x ) )
     {
         case (FP_TYPE_NORMAL):
         {
@@ -1249,11 +1542,11 @@ f32_t ADDCALL f32_set_exp ( f32_t x, i16_t e )
     return ret.f;
 }
 
-f64_t ADDCALL f64_set_exp ( f64_t x, i16_t e )
+f64_t ADDCALL fp64_set_exp ( f64_t x, i16_t e )
 {
 	dw_t ret;
 
-    switch ( f64_get_subset( x ) )
+    switch ( fp64_get_subset( x ) )
     {
         case (FP_TYPE_NORMAL):
         {
@@ -1315,13 +1608,19 @@ fp32_vec2_t ADDCALL fp32_find_control_boundaries( f32_t at_x, const f32_t * cont
         {
             const f32_t control_center = control_points[ i ];
 
-            if( control_center == 1.0 || control_center == -1.0 )
+            if( control_center == +1.0f )
             {
-                local_epsl      = 0.5f * m_epsf32.f;
-                local_epsr      =        m_epsf32.f;
+                local_epsl      = +0.5f * m_epsf32.f;
+                local_epsr      = +       m_epsf32.f;
             }
 
-            else if( control_center == 0.0 )
+            else if( control_center == -1.0f )
+            {
+                local_epsl      = -       m_epsf32.f;
+                local_epsr      = -0.5f * m_epsf32.f;
+            }
+
+            else if( control_center == 0.0f )
             {
                 control_left    = -0.0;
                 control_right   = +0.0;
@@ -1332,7 +1631,7 @@ fp32_vec2_t ADDCALL fp32_find_control_boundaries( f32_t at_x, const f32_t * cont
 
             else /* general method */
             {
-                local_epsl      = ( f32_next_float( control_center ) - control_center ) / control_center;
+                local_epsl      = ( fp32_next_float( control_center ) - control_center ) / control_center;
                 local_epsr      = local_epsl;
             }
 
@@ -1373,10 +1672,16 @@ fp64_vec2_t ADDCALL fp64_find_control_boundaries( f64_t at_x, const f64_t * cont
         {
             const f64_t control_center = control_points[ i ];
 
-            if( control_center == 1.0 || control_center == -1.0 )
+            if( control_center == +1.0 )
             {
-                local_epsl      = 0.5 * m_epsf64.f;
-                local_epsr      =       m_epsf64.f;
+                local_epsl      = +0.5 * m_epsf64.f;
+                local_epsr      = +      m_epsf64.f;
+            }
+
+            else if( control_center == -1.0 )
+            {
+                local_epsl      = -      m_epsf64.f;
+                local_epsr      = -0.5 * m_epsf64.f;
             }
 
             else if( control_center == 0.0 )
@@ -1390,7 +1695,7 @@ fp64_vec2_t ADDCALL fp64_find_control_boundaries( f64_t at_x, const f64_t * cont
 
             else /* general method */
             {
-                local_epsl      = ( f64_next_float( control_center ) - control_center ) / control_center;
+                local_epsl      = ( fp64_next_float( control_center ) - control_center ) / control_center;
                 local_epsr      = local_epsl;
             }
 
@@ -1428,7 +1733,7 @@ f32_t ADDCALL fp32_next_x( f32_t x, f32_t frac, const f32_t * control_points, f6
     const f32_t         control_left  = control_point.x0;
     const f32_t         control_right = control_point.x1;
 
-    f32_t next = f32_geom_step_real_line( x, frac );
+    f32_t next = fp32_geom_step_real_line( x, frac );
 
     /* CASE 2: x left   control -> next passes left control     : step grow */
     if( ( x < control_left ) && ( next >= control_left ) )
@@ -1448,23 +1753,23 @@ f32_t ADDCALL fp32_next_x( f32_t x, f32_t frac, const f32_t * control_points, f6
     /* CASE 3: x inside control                                 : step grow */
     else if( ( control_left <= x ) && ( x <= control_right ) )
     {
-        next = f32_next_float( x );
+        next = fp32_next_float( x );
         g_fpenv.debug_next_x_inside_boundaries && printf("CASE 3: %f, [%f -> %f], %f\n", control_left, x, next, control_right);
     }
 
     /* CASE 4: x inside control zero (child of CASE 3)          : step grow */
-    else if ( f32_get_subset( x ) == FP_TYPE_ZERO )
+    else if ( fp32_get_subset( x ) == FP_TYPE_ZERO )
     {
-        next = f32_next_float( x );
+        next = fp32_next_float( x );
         g_fpenv.debug_next_x_inside_boundaries && printf("CASE 4: %+.1f, [%f -> %f], %+.1f\n", control_left, x, next, control_right);
     }
 
     /* CASE 5: x is one of the two infinites                    : step grow (-inf), clamp (+inf) */
-    else if ( f32_get_subset( x ) == FP_TYPE_INFINITE )
+    else if ( fp32_get_subset( x ) == FP_TYPE_INFINITE )
     {
         if( x == (-m_inff32.f) )
         {
-            next = f32_next_float( x );
+            next = fp32_next_float( x );
             g_fpenv.debug_next_x_inside_boundaries && printf("CASE 5: %+.1f, [%f -> %f], %+.1f\n", control_left, x, next, control_right);
         }
 
@@ -1489,7 +1794,7 @@ f64_t ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_t * control_points, f6
     const f64_t         control_left  = control_point.x0;
     const f64_t         control_right = control_point.x1;
 
-    f64_t next = f64_geom_step_real_line( x, frac );
+    f64_t next = fp64_geom_step_real_line( x, frac );
 
     /* CASE 2: x left   control -> next passes left control     : step grow */
     if( ( x < control_left ) && ( next >= control_left ) )
@@ -1509,23 +1814,23 @@ f64_t ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_t * control_points, f6
     /* CASE 3: x inside control                                 : step grow */
     else if( ( control_left <= x ) && ( x <= control_right ) )
     {
-        next = f64_next_float( x );
+        next = fp64_next_float( x );
         g_fpenv.debug_next_x_inside_boundaries && printf("CASE 3: %f, [%f -> %f], %f\n", control_left, x, next, control_right);
     }
 
     /* CASE 4: x inside control zero (child of CASE 3)          : step grow */
-    else if ( f64_get_subset( x ) == FP_TYPE_ZERO )
+    else if ( fp64_get_subset( x ) == FP_TYPE_ZERO )
     {
-        next = f64_next_float( x );
+        next = fp64_next_float( x );
         g_fpenv.debug_next_x_inside_boundaries && printf("CASE 4: %+.1f, [%f -> %f], %+.1f\n", control_left, x, next, control_right);
     }
 
     /* CASE 5: x is one of the two infinites                    : step grow (-inf), clamp (+inf) */
-    else if ( f64_get_subset( x ) == FP_TYPE_INFINITE )
+    else if ( fp64_get_subset( x ) == FP_TYPE_INFINITE )
     {
         if( x == (-m_inff64.f) )
         {
-            next = f64_next_float( x );
+            next = fp64_next_float( x );
             g_fpenv.debug_next_x_inside_boundaries && printf("CASE 5: %+.1f, [%f -> %f], %+.1f\n", control_left, x, next, control_right);
         }
 
@@ -1566,11 +1871,27 @@ f64_t ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_t * control_points, f6
 
 void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] )
 {
-    printf("Analyzing %s\n"LINE_SEPARATOR"\n", desc);
+    const bool_t reset_grow_frac = ( g_fpenv.fp32_grow_frac == 0.0f );
+    const bool_t reset_ctrl_ulps = ( g_fpenv.fp32_ctrl_ulps == 0.0f );
+
+    printf("\nAnalyzing %s\n"LINE_SEPARATOR"\n", desc);
+
+    if( reset_grow_frac )
+    {
+        g_fpenv.fp32_grow_frac = 1.e-4;
+        fprintf(stderr,"[INFO]: given frac <= 0.0, selecting default frac = %e\n", g_fpenv.fp32_grow_frac);
+    }
+
+    if( reset_ctrl_ulps )
+    {
+        g_fpenv.fp32_ctrl_ulps = 100.0f;
+        fprintf(stderr,"[INFO]: given control width in ulps <= 1.0, selecting default width = %f\n", g_fpenv.fp32_ctrl_ulps);
+    }
+
 
     /* >> MAIN ANALYSIS */
-    const f32_t x_min   = -f32_get_named_fp_in_real_line( NAMED_FP_INF );
-    const f32_t x_max   = +f32_get_named_fp_in_real_line( NAMED_FP_INF );
+    const f32_t x_min   = -fp32_get_named_fp_in_real_line( NAMED_FP_INF );
+    const f32_t x_max   = +fp32_get_named_fp_in_real_line( NAMED_FP_INF );
 
     f32_t x_curr        = x_min;
     /* << MAIN ANALYSIS */
@@ -1594,7 +1915,7 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
 
     /* >> SERVICE: RANGE FINDER */
     f32_t x_prev = x_curr;
-    INIT_RANGE( x_prev, f32_get_subset( lhs ( x_prev ) ) );
+    INIT_RANGE( x_prev, fp32_get_subset( lhs ( x_prev ) ) );
     /* << SERVICE: RANGE FINDER */
 
     /* >> SERVICE: ERROR LOOP TERMINATION */
@@ -1607,7 +1928,7 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
         /* >> MAIN ANALYSIS */
         const f32_t     y_lhs       = lhs ( x_curr );
         const f32_t     y_rhs       = rhs ( x_curr );
-        const fpset_t   y_lhs_type  = f32_get_subset( y_lhs );
+        const fpset_t   y_lhs_type  = fp32_get_subset( y_lhs );
         /* << MAIN ANALYSIS */
 
         /* >> SERVICE: ULP */
@@ -1616,7 +1937,7 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
         /* << SERVICE: ULP */
 
         {/* >> SERVICE: PROGRESS BAR */
-            fp32_progress_bar( g_fpenv, x_curr, x_min, x_max, &pstate );
+            fp32_progress_bar( desc, g_fpenv, x_curr, x_min, x_max, &pstate );
         }/* << SERVICE: PROGRESS BAR */
 
         {/* >> SERVICE: POINTS COUNTER */
@@ -1627,6 +1948,10 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
             UPDATE_RANGE(x_prev, x_curr, y_lhs, y_lhs_type);
             x_prev = x_curr;
         }/* << SERVICE: RANGE FINDER */
+
+        {/* >> SERVICE: HIST ULP */
+            fp_histogram_set_ulp( curr_ulp, &x_curr, FP32, reject );
+        }/* << SERVICE: HIST ULP */
 
         {/* >> MAIN ANALYSIS */
             x_curr = next_x( x_curr ); /* Update x */
@@ -1639,15 +1964,8 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
     /* << MAIN ANALYSIS */
 
     {/* >> SERVICE: PROGRESS BAR */
-        console_erase_last_n_chars( 255u, g_fpenv );
+        fp_console_remove_line( g_fpenv );
     }/* << SERVICE: PROGRESS BAR */
-
-    {/* >> SERVICE: ERROR LOOP TERMINATION */
-        if( x_curr_ntimes_analyzed != 0 )
-        {
-            printf("[INFO]: loop stopped to prevent double analysis of point %f\n", x_curr);
-        }
-    }/* << SERVICE: ERROR LOOP TERMINATION */
 
     {/* >> SERVICE: RANGE FINDER */
     CLOSE_RANGE(x_prev);
@@ -1658,47 +1976,39 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
      * TODO: define the state of this function and send all of this to another function is possible
      */
 
+    if( reset_grow_frac ) { g_fpenv.fp32_grow_frac = 0.0f; }
+    if( reset_ctrl_ulps ) { g_fpenv.fp32_ctrl_ulps = 0.0f; }
+
     {/* >> SERVICE: RANGE FINDER */
-        printf("\n Range Len:\n"LINE_SEPARATOR"\n");
-        for(u32_t i = 0; i < m_relf_range_len; i++)
-        {
-            const f32_t yl = lhs( m_relf_range_left[i] );
-            const f32_t yr = lhs( m_relf_range_right[i] );
-
-            fpset_t yl_type = f32_get_subset( yl );
-            cstr_t  yl_name = fp32_get_subset_name( yl );
-
-            if( ( yl_type == FP_TYPE_NAN ) || ( yl_type == FP_TYPE_INFINITE ) || ( yl_type == FP_TYPE_ZERO ) )
-            {
-                printf("[ %+12.2e, %+12.2e ] -> %s\n", m_relf_range_left[i], m_relf_range_right[i], yl_name );
-            }
-            else
-            {
-                printf("[ %+12.2e, %+12.2e ] -> %s [ %+.2e, %+.2e ]\n", m_relf_range_left[i], m_relf_range_right[i], yl_name, yl, yr );
-            }
-        }
+        fp32_print_range_types( lhs );
     }/* << SERVICE: RANGE FINDER */
 
     {/* >> SERVICE: PROGRESS BAR */
-        f64_t count_exp  = log10( count_hi );
-        i64_t count_iexp = (i64_t) count_exp;
-        f64_t count_frac = ( count_exp > 1.0 ) ? ( count_exp - count_iexp ) : count_exp;
-
-        printf("\n Analyzed points:\n"LINE_SEPARATOR"\n%.1fe+%lld (%.1f%%) in [ %e, %e ]\n", pow(10.0, count_frac), count_iexp, 100. * ( (f64_t) count_hi / ((f64_t) total_fp32) ), x_min, x_curr );
+        fp32_print_total_analyzed_points( count_hi, total_fp32, x_min, x_curr );
     }/* >> SERVICE: PROGRESS BAR */
 
     {/* >> SERVICE: ULP */
         ULPS_HIST_REPORT;
     }/* << SERVICE: ULP */
+
+    {/* >> SERVICE: HIST ULP */
+        fp_printf_hist_of_fails_by_exp( MAX_NHIST_F32, EMAX_F32, EMIN_F32, reject );
+    }/* << SERVICE: HIST ULP */
 }
 
 void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] )
 {
-    printf("Analyzing %s\n"LINE_SEPARATOR"\n", desc);
+    const bool_t reset_grow_frac = ( g_fpenv.fp64_grow_frac == 0.0 );
+    const bool_t reset_ctrl_ulps = ( g_fpenv.fp64_ctrl_ulps == 0.0 );
+
+    printf("\nAnalyzing %s\n"LINE_SEPARATOR"\n", desc);
+
+    if( reset_grow_frac ) { g_fpenv.fp64_grow_frac = 1.e-4; }
+    if( reset_ctrl_ulps ) { g_fpenv.fp64_ctrl_ulps = 100.0f; }
 
     /* >> MAIN ANALYSIS */
-    const f64_t x_min   = -f64_get_named_fp_in_real_line( NAMED_FP_INF );
-    const f64_t x_max   = +f64_get_named_fp_in_real_line( NAMED_FP_INF );
+    const f64_t x_min   = -fp64_get_named_fp_in_real_line( NAMED_FP_INF );
+    const f64_t x_max   = +fp64_get_named_fp_in_real_line( NAMED_FP_INF );
 
     f64_t x_curr        = x_min;
     /* << MAIN ANALYSIS */
@@ -1714,7 +2024,6 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
     /* >> SERVICE: POINTS COUNTER */
     u64_t count_hi = 0;
     u64_t total_fp64 = (~0llu - (2llu * 8388607llu) + 1llu ) ; /* 2^64 - all f64 NaNs */
-
     /* << SERVICE: POINTS COUNTER */
 
     /* >> SERVICE: ULP */
@@ -1723,7 +2032,7 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
 
     /* >> SERVICE: RANGE FINDER */
     f64_t x_prev = x_curr;
-    INIT_RANGE( x_prev, f64_get_subset( lhs ( x_prev ) ) );
+    INIT_RANGE( x_prev, fp64_get_subset( lhs ( x_prev ) ) );
     /* << SERVICE: RANGE FINDER */
 
     /* >> SERVICE: ERROR LOOP TERMINATION */
@@ -1736,7 +2045,7 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
         /* >> MAIN ANALYSIS */
         const f64_t     y_lhs       = lhs ( x_curr );
         const f64_t     y_rhs       = rhs ( x_curr );
-        const fpset_t   y_lhs_type  = f64_get_subset( y_lhs );
+        const fpset_t   y_lhs_type  = fp64_get_subset( y_lhs );
         /* << MAIN ANALYSIS */
 
         /* >> SERVICE: ULP */
@@ -1744,8 +2053,12 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
         ULPS_HIST_RECORD( curr_ulp, x_curr );
         /* << SERVICE: ULP */
 
+        {/* >> SERVICE: HISTOGRAM */
+            u64_t npoints_in_range = 0;
+        }/* << SERVICE: HISTOGRAM */
+
         {/* >> SERVICE: PROGRESS BAR */
-            fp64_progress_bar( g_fpenv, x_curr, x_min, x_max, &pstate );
+            fp64_progress_bar( desc, g_fpenv, x_curr, x_min, x_max, &pstate );
         }/* << SERVICE: PROGRESS BAR */
 
         {/* >> SERVICE: POINTS COUNTER */
@@ -1756,6 +2069,10 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
             UPDATE_RANGE(x_prev, x_curr, y_lhs, y_lhs_type);
             x_prev = x_curr;
         }/* << SERVICE: RANGE FINDER */
+
+        {/* >> SERVICE: HIST ULP */
+            fp_histogram_set_ulp( curr_ulp, &x_curr, FP64, reject );
+        }/* << SERVICE: HIST ULP */
 
         {/* >> MAIN ANALYSIS */
             x_curr = next_x( x_curr ); /* Update x */
@@ -1768,15 +2085,8 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
     /* << MAIN ANALYSIS */
 
     {/* >> SERVICE: PROGRESS BAR */
-        console_erase_last_n_chars( 255u, g_fpenv );
+        fp_console_remove_line( g_fpenv );
     }/* << SERVICE: PROGRESS BAR */
-
-    {/* >> SERVICE: ERROR LOOP TERMINATION */
-        if( x_curr_ntimes_analyzed != 0 )
-        {
-            printf("[INFO]: loop stopped to prevent double analysis of point %f\n", x_curr);
-        }
-    }/* << SERVICE: ERROR LOOP TERMINATION */
 
     {/* >> SERVICE: RANGE FINDER */
     CLOSE_RANGE(x_prev);
@@ -1787,36 +2097,414 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
      * TODO: define the state of this function and send all of this to another function is possible
      */
 
+    if( reset_grow_frac ) { g_fpenv.fp64_grow_frac = 0.0; }
+    if( reset_ctrl_ulps ) { g_fpenv.fp64_ctrl_ulps = 0.0; }
+
     {/* >> SERVICE: RANGE FINDER */
-        printf("\n Range Len:\n"LINE_SEPARATOR"\n");
-        for(u32_t i = 0; i < m_relf_range_len; i++)
-        {
-            const f64_t yl = lhs( m_relf_range_left[i] );
-            const f64_t yr = lhs( m_relf_range_right[i] );
-
-            fpset_t yl_type = f64_get_subset( yl );
-            cstr_t  yl_name = fp64_get_subset_name( yl );
-
-            if( ( yl_type == FP_TYPE_NAN ) || ( yl_type == FP_TYPE_INFINITE ) || ( yl_type == FP_TYPE_ZERO ) )
-            {
-                printf("[ %+12.2e, %+12.2e ] -> %s\n", m_relf_range_left[i], m_relf_range_right[i], yl_name );
-            }
-            else
-            {
-                printf("[ %+12.2e, %+12.2e ] -> %s [ %+.2e, %+.2e ]\n", m_relf_range_left[i], m_relf_range_right[i], yl_name, yl, yr );
-            }
-        }
+        fp64_print_range_types( lhs );
     }/* << SERVICE: RANGE FINDER */
 
     {/* >> SERVICE: PROGRESS BAR */
-        f64_t count_exp  = log10( count_hi );
-        i64_t count_iexp = (i64_t) count_exp;
-        f64_t count_frac = ( count_exp > 1.0 ) ? ( count_exp - count_iexp ) : count_exp;
-
-        printf("\n Analyzed points:\n"LINE_SEPARATOR"\n%.1fe+%lld (%.1f%%) in [ %e, %e ]\n", pow(10.0, count_frac), count_iexp, 100. * ( (f64_t) count_hi / ((f64_t) total_fp64) ), x_min, x_curr );
+        fp64_print_total_analyzed_points( count_hi, total_fp64, x_min, x_curr );
     }/* >> SERVICE: PROGRESS BAR */
 
     {/* >> SERVICE: ULP */
         ULPS_HIST_REPORT;
     }/* << SERVICE: ULP */
+
+    {/* >> SERVICE: HIST ULP */
+        fp_printf_hist_of_fails_by_exp( MAX_NHIST_F64, EMAX_F64, EMIN_F64, reject );
+    }/* << SERVICE: HIST ULP */
+}
+
+f32_t ADDCALL fp32_geometric_grow( f32_t x )
+{
+    static const f32_t default_ctrlp[ ] =
+    {
+        -FP32_R4,
+        -FP32_PI,
+        -FP32_EULER,
+        -FP32_3PI4,
+        -FP32_R2,
+        -FP32_PI2,
+        -FP32_SQRT2,
+        -FP32_R1,
+        -FP32_1R2,
+        -FP32_MIN,
+        +FP32_ZERO,
+        +FP32_MIN,
+        +FP32_1R2,
+        +FP32_R1,
+        +FP32_SQRT2,
+        +FP32_PI2,
+        +FP32_R2,
+        +FP32_3PI4,
+        +FP32_EULER,
+        +FP32_PI,
+        +FP32_R4,
+    };
+
+    return ( fp32_next_x( x, g_fpenv.fp32_grow_frac, default_ctrlp, g_fpenv.fp32_ctrl_ulps, SIZEOF( default_ctrlp ) ) );
+}
+
+f64_t ADDCALL fp64_geometric_grow( f64_t x )
+{
+    static const f64_t default_ctrlp[ ] =
+    {
+        -FP64_R4,
+        -FP64_PI,
+        -FP64_EULER,
+        -FP64_3PI4,
+        -FP64_R2,
+        -FP64_PI2,
+        -FP64_SQRT2,
+        -FP64_R1,
+        -FP64_1R2,
+        -FP64_MIN,
+        +FP64_ZERO,
+        +FP64_MIN,
+        +FP64_1R2,
+        +FP64_R1,
+        +FP64_SQRT2,
+        +FP64_PI2,
+        +FP64_R2,
+        +FP64_3PI4,
+        +FP64_EULER,
+        +FP64_PI,
+        +FP64_R4,
+    };
+
+    return ( fp64_next_x( x, g_fpenv.fp64_grow_frac, default_ctrlp, g_fpenv.fp64_ctrl_ulps, SIZEOF( default_ctrlp ) ) );
+}
+
+/*
+ * SECTION: BENCHMARK
+ */
+
+static i32_t fp80_compare(const void* a, const void* b)
+{
+    return (*(f80_t*)a > *(f80_t*)b);
+}
+
+static inline u64_t fp_get_time_ns()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64_t) ts.tv_sec * 1.e9 + ts.tv_nsec;
+}
+
+#ifdef CPU_SET
+static void fp_pin_cpu()
+{
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(0, &set);
+    sched_setaffinity(0, sizeof(set), &set);
+}
+#endif
+
+fp64_vec2_t ADDCALL fp32_benchmark_avg_time( f3232_t test_func )
+{
+    fp64_vec2_t ret;
+
+    static const u32_t niter = 100;
+
+    u32_t ndiscards = 0;
+
+    static f80_t tr[100] = {0};
+
+    for ( u32_t i = 0; i < niter; ++i )
+    {
+        tr[i] = (f80_t) FP32_BENCHMARK_MATH_FUNCTION( test_func );
+    }
+
+    qsort( tr, niter, sizeof(f80_t), fp80_compare);
+
+    const f80_t median = tr[ niter / 2 ];
+    f80_t acc = 0.0L;
+    for ( u32_t i = 0; i < niter; ++i )
+    {
+        if( tr[i] < 1.e3 )
+        {
+            acc += tr[i];
+        }
+        else
+        {
+            ndiscards++;
+        }
+    }
+
+    const f80_t mean = 0.5 * ( acc / (niter - ndiscards) + median );
+
+    acc = 0.0L;
+    for ( u32_t i = 0; i < niter; ++i )
+    {
+        if( tr[i] < 1.e3 )
+        {
+            acc += ( tr[i] - mean ) * ( tr[i] - mean );
+        }
+
+        tr[i] = 0.0L; // Reset for next batch
+    }
+
+    const f80_t sd = sqrtl( acc ) / (f80_t) (niter - ndiscards);
+
+    ret.x0 = (f64_t) median;
+    ret.x1 = (f64_t) 4. * sd;
+
+    return ( ret );
+}
+
+fp64_vec2_t ADDCALL fp64_benchmark_avg_time( f6464_t test_func )
+{
+    fp64_vec2_t ret;
+
+    static const u32_t niter = 100;
+
+    u32_t ndiscards = 0;
+
+    static f80_t tr[100] = {0};
+
+    for ( u32_t i = 0; i < niter; ++i )
+    {
+        tr[i] = (f80_t) FP64_BENCHMARK_MATH_FUNCTION( test_func );
+    }
+
+    qsort( tr, niter, sizeof(f80_t), fp80_compare);
+
+    const f80_t median = tr[ niter / 2 ];
+    f80_t acc = 0.0L;
+    for ( u32_t i = 0; i < niter; ++i )
+    {
+        if( tr[i] < 1.e3 )
+        {
+            acc += tr[i];
+        }
+        else
+        {
+            ndiscards++;
+        }
+    }
+
+    const f80_t mean = 0.5 * ( acc / (niter - ndiscards) + median );
+
+    acc = 0.0L;
+    for ( u32_t i = 0; i < niter; ++i )
+    {
+        if( tr[i] < 1.e3 )
+        {
+            acc += ( tr[i] - mean ) * ( tr[i] - mean );
+        }
+
+        tr[i] = 0.0L; // Reset for next batch
+    }
+
+    const f80_t sd = sqrtl( acc ) / (f80_t) (niter - ndiscards);
+
+    ret.x0 = (f64_t) median;
+    ret.x1 = (f64_t) 4. * sd;
+
+    return ( ret );
+}
+
+f64_t ADDCALL fp32_benchmark_core_ns_per_call( f3232_t test_fun, f3232_t mock_fun )
+{
+    volatile f32_t dummy;
+    f32_t x;
+    u64_t start, end;
+    u64_t ncalls = 0;
+
+    /* Warm-up */
+    for( i32_t i = 0; i < 1000; i++ ) { dummy = test_fun( (f32_t) i ); }
+
+    /* Measure function + loop */
+    start = fp_get_time_ns();
+    test_fun( -m_inff32.f );  test_fun( +m_inff32.f );
+    test_fun( -m_qnanf32.f ); test_fun( +m_qnanf32.f );
+    test_fun( -m_subnf32.f ); test_fun( +m_subnf32.f );
+    x = -m_maxf32.f; while ( x != 0.0 ) { dummy = test_fun(x); x = 0.5f * x; }
+    x = +m_maxf32.f; while ( x != 0.0 ) { dummy = test_fun(x); x = 0.5f * x; }
+    end = fp_get_time_ns();
+
+    u64_t total_time = end - start;
+
+    /* Measure loop overhead */
+    start = fp_get_time_ns();
+    (void)( -m_inff32.f );  (void)( +m_inff32.f );
+    (void)( -m_qnanf32.f ); (void)( +m_qnanf32.f );
+    (void)( -m_subnf32.f ); (void)( +m_subnf32.f );
+    x = -m_maxf32.f; while ( x != 0.0 ) { dummy = mock_fun(x); x = 0.5f * x; }
+    x = +m_maxf32.f; while ( x != 0.0 ) { dummy = mock_fun(x); x = 0.5f * x; }
+    end = fp_get_time_ns();
+
+    u64_t loop_time = end - start;
+
+    /* Measure number of calls */
+    ncalls++; ncalls++; /* +2 infinites */
+    ncalls++; ncalls++; /* +2 qnan */
+    ncalls++; ncalls++; /* +2 subn */
+    x = -m_maxf32.f; while ( x != 0.0 ) { ncalls++; x = 0.5f * x; }
+    x = +m_maxf32.f; while ( x != 0.0 ) { ncalls++; x = 0.5f * x; }
+
+    /* Compute per-call time */
+    return (f64_t)(total_time - loop_time) / (f64_t) ncalls;
+}
+
+f64_t ADDCALL fp64_benchmark_core_ns_per_call( f6464_t test_fun, f6464_t mock_fun )
+{
+    volatile f64_t dummy;
+    f64_t x;
+    u64_t start, end;
+    u64_t ncalls = 0;
+
+    /* Warm-up */
+    for( i32_t i = 0; i < 1000; i++ ) { dummy = test_fun( (f64_t) i ); }
+
+    /* Measure function + loop */
+    start = fp_get_time_ns();
+    test_fun( -m_inff64.f );  test_fun( +m_inff64.f );
+    test_fun( -m_qnanf64.f ); test_fun( +m_qnanf64.f );
+    test_fun( -m_subnf64.f ); test_fun( +m_subnf64.f );
+    x = -m_maxf64.f; while ( x != 0.0 ) { dummy = test_fun(x); x = 0.5 * x; }
+    x = +m_maxf64.f; while ( x != 0.0 ) { dummy = test_fun(x); x = 0.5 * x; }
+    end = fp_get_time_ns();
+
+    u64_t total_time = end - start;
+
+    /* Measure loop overhead */
+    start = fp_get_time_ns();
+    (void)( -m_inff64.f );  (void)( +m_inff64.f );
+    (void)( -m_qnanf64.f ); (void)( +m_qnanf64.f );
+    (void)( -m_subnf64.f ); (void)( +m_subnf64.f );
+    x = -m_maxf64.f; while ( x != 0.0 ) { dummy = mock_fun(x); x = 0.5 * x; }
+    x = +m_maxf64.f; while ( x != 0.0 ) { dummy = mock_fun(x); x = 0.5 * x; }
+    end = fp_get_time_ns();
+
+    u64_t loop_time = end - start;
+
+    /* Measure number of calls  */
+    ncalls++; ncalls++; /* +2 infinites */
+    ncalls++; ncalls++; /* +2 qnan */
+    ncalls++; ncalls++; /* +2 subn */
+    x = -m_maxf64.f; while ( x != 0.0 ) { ncalls++; x = 0.5 * x; }
+    x = +m_maxf64.f; while ( x != 0.0 ) { ncalls++; x = 0.5 * x; }
+
+    /* Compute per-call time */
+    return (f64_t)(total_time - loop_time) / (f64_t) ncalls;
+}
+
+void ADDCALL fp32_print_benchmark_avg_time_evolution( f3232_t fptr3232 )
+{
+    while(1)
+    {
+        fp64_vec2_t response_time;
+
+        f64_t mean = 0.0;
+        f64_t sd = 0.0;
+        u32_t n = 0;
+        u32_t nmax = 0;
+
+        f64_t prev = 0.0;
+
+        while( nmax != 1000 )
+        {
+            nmax++;
+
+            response_time = fp32_benchmark_avg_time( fptr3232 );
+
+            if( response_time.x0 < 1.e3 && response_time.x1 < 1.e3 )
+            {
+                n++;
+                f64_t a = 1./((f64_t)n);
+                f64_t b = 1 - a;
+                mean = a*response_time.x0 + b*mean;
+                sd   = a*response_time.x1 + b*sd;
+
+                f64_t rel_diff = fabs( ( prev - mean ) / mean );
+
+                if( rel_diff < 1.e-6 )
+                {
+                    break;
+                }
+                else
+                {
+                    prev = mean;
+                }
+            }
+        }
+
+        if( nmax == 1000 )
+        {
+            /* fprintf(stderr, "[ERROR] benchmark cannot find an average time for function\n"); */
+        }
+        else
+        {
+            printf("%3.3f, %3.3f\n", mean, sd);
+        }
+    }
+}
+
+void ADDCALL fp64_print_benchmark_avg_time_evolution( f6464_t fptr6464 )
+{
+    while(1)
+    {
+        fp64_vec2_t response_time;
+
+        f64_t mean = 0.0;
+        f64_t sd = 0.0;
+        u32_t n = 0;
+        u32_t nmax = 0;
+
+        f64_t prev = 0.0;
+
+        while( nmax != 1000 )
+        {
+            nmax++;
+
+            response_time = fp64_benchmark_avg_time( fptr6464 );
+
+            if( response_time.x0 < 1.e3 && response_time.x1 < 1.e3 )
+            {
+                n++;
+                f64_t a = 1./((f64_t)n);
+                f64_t b = 1 - a;
+                mean = a*response_time.x0 + b*mean;
+                sd   = a*response_time.x1 + b*sd;
+
+                f64_t rel_diff = fabs( ( prev - mean ) / mean );
+
+                if( rel_diff < 1.e-6 )
+                {
+                    break;
+                }
+                else
+                {
+                    prev = mean;
+                }
+            }
+        }
+
+        if( nmax == 1000 )
+        {
+            /* fprintf(stderr, "[ERROR] benchmark cannot find an average time for function\n"); */
+        }
+        else
+        {
+            printf("%3.3f, %3.3f\n", mean, sd);
+        }
+    }
+}
+
+void ADDCALL fp32_print_benchmark_avg_time( cstr_t fname, f3232_t fptr3232 )
+{
+    fp64_vec2_t tr = fp32_benchmark_avg_time( fptr3232 );
+
+    printf("%s took: %3.3f, %3.3f\n", fname, tr.x0, tr.x1);
+}
+
+void ADDCALL fp64_print_benchmark_avg_time( cstr_t fname, f6464_t fptr6464 )
+{
+    fp64_vec2_t tr = fp64_benchmark_avg_time( fptr6464 );
+
+    printf("%s took: %3.3f, %3.3f\n", fname, tr.x0, tr.x1);
 }

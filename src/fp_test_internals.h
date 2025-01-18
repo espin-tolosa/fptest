@@ -86,7 +86,56 @@ static const dw_t m_subnf64	= { .u = 0x0000000000000001uL, };
 static const dw_t m_qnanf64	= { .u = 0x7FF8000000000000uL, };
 static const fw_t m_epsf64	= { .f = (f64_t) 2.22044604925031308084726333618164062e-16L, };
 
+#define FP32_ZERO   (0.0f)
+#define FP32_MIN    (1.175494350822287507968737E-38f)
+#define FP32_1R2	(0.5f)
+#define FP32_R1     (1.0f)
+#define FP32_SQRT2  (1.41421353816986083984375f)
+#define FP32_PI2 	(1.57079637050628662109375f)
+#define FP32_R2		(2.0f)
+#define FP32_3PI4 	(2.35619449615478515625f)
+#define FP32_EULER 	(2.71828174591064453125f)
+#define FP32_PI 	(3.1415927410125732421875f)
+#define FP32_R4     (4.0f)
+
+#define FP64_ZERO   (0.0)
+#define FP64_MIN    (2.2250738585072013830902327173324e-308)
+#define FP64_1R2	(0.5)
+#define FP64_R1     (1.0)
+#define FP64_SQRT2  (1.41421353816986083984375)
+#define FP64_PI2 	(1.5707963267948966192313216916398)
+#define FP64_R2     (2.0)
+#define FP64_3PI4 	(2.3561944901923449288469825374596)
+#define FP64_EULER 	(2.7182818284590452353602874713527)
+#define FP64_PI 	(3.1415926535897932384626433832795)
+#define FP64_R4     (4.0)
+
+/* Private Types */
+typedef struct
+{
+    i32_t xexp;
+    u64_t count_points_in_the_range;
+} fp_progress_state_t;
+
+/* Private functions */
+static f64_t    		fp32_ulps_impl ( f32_t approx, f80_t diff );
+static f64_t    		fp64_ulps_impl ( f64_t approx, f80_t diff );
+
+static u32_t    		fp32_progress_bar_status( f32_t x );
+static void     		fp32_progress_bar( cstr_t desc, fpenv_t fpenv, f32_t x_curr, f32_t x_min, f32_t x_max, fp_progress_state_t * pstate );
+
+static u32_t    		fp64_progress_bar_status( f64_t x );
+static void     		fp64_progress_bar( cstr_t desc, fpenv_t fpenv, f64_t x_curr, f64_t x_min, f64_t x_max, fp_progress_state_t * pstate );
+
+static void     		fp_console_remove_line( fpenv_t fpenv );
+
+static i32_t 			fp80_compare(const void* a, const void* b);
+
+static inline 	u64_t 	fp_get_time_ns();
+
 /* Utilities */
+#define LINE_SEPARATOR "========================================================================================="
+
 #define F32_UNBIASED_TO_BIASED_EXP(e) ( (e) < EMIN_F32 ? EMIN_F32 : ( (e) > EMAX_F32 ? EMAX_F32 : (e) + EMAX_F32 ) )
 #define F64_UNBIASED_TO_BIASED_EXP(e) ( (e) < EMIN_F64 ? EMIN_F64 : ( (e) > EMAX_F64 ? EMAX_F64 : (e) + EMAX_F64 ) )
 
@@ -101,5 +150,23 @@ do { \
 
 #define F32_GET_EXP(x) ( (i16_t) ( ( ((fw_t){ .f = x }).w[ FW0 ] & FW0_EMASK ) >> DOFFS_F32 ) - EMAX_F32 )
 #define F64_GET_EXP(x) ( (i16_t) ( ( ((dw_t){ .f = x }).w[ DW0 ] & DW0_EMASK ) >> DOFFS_F64 ) - EMAX_F64 )
+
+/* >> KEY VALUE VECTOR */
+#define MAX_CAPACITY (1u << 30)
+#define GROWTH_RATIO 2
+
+typedef struct
+{
+    const void * k;
+    const void * v;
+} kv_t;
+
+typedef struct
+{
+    kv_t * elems;
+    unsigned int len;
+    unsigned int size;
+} vector_t;
+/* << KEY VALUE VECTOR */
 
 #endif/*FPTEST_INTERNALS_H*/

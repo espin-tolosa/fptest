@@ -12,7 +12,7 @@ CC_ASAN		:=
 LD_ASAN		:=
 
 # Linked libraries
-LD_CC		:=	-lm
+LD_CC		:=	-lm -s -shared -Wl,--subsystem,windows
 
 # Add address sanitizer when using clang compiler
 ifeq ($(shell $(CC) --version | grep -i clang),)
@@ -29,7 +29,7 @@ LDFLAGS 	:=	$(LD_ASAN) $(LD_CC)
 INCS		:=	$(wildcard $(INC_SRC)/*.h)
 SRCS		:=	$(wildcard $(DIR_SRC)/*.c)
 OBJS		:=	$(SRCS:.c=.o)
-BINS		:=	bin.exe
+BINS		:=	fptest.dll
 
 all:$(BINS)
 
@@ -37,7 +37,7 @@ all:$(BINS)
 	@$(CC) $(CCFLAGS) -c $< -o $@ -DADD_EXPORTS
 
 $(BINS):$(OBJS)
-	@$(CC) $(LDFLAGS) $(OBJS) -o fptest.dll -s -shared -Wl,--subsystem,windows
+	@$(CC) $(LDFLAGS) $(OBJS) -o $@
 
 clean:
 	@$(RM) -rf $(BINS) $(DIR_SRC)/*.o $(DIR_SRC)/*.s $(DIR_SRC)/*.i
