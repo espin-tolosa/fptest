@@ -6,6 +6,7 @@ CC_WNO		:=	-Wno-gnu-line-marker -Wno-unused
 INC_SRC		:=	 src
 DIR_SRC		:=	 src
 DIR_CUT		:=	 test
+DIR_INSTALL :=	 ../math/vendor/fptest
 
 # Sanitizers
 CC_ASAN		:=
@@ -50,3 +51,11 @@ test:
 	@$(CC) -c -o test_dll.o test_dll.c
 	@$(CC) -o test_dll.exe -s test_dll.o -L. -lfptest
 	./test_dll.exe
+
+install:clean all
+ifndef DIR_INSTALL
+	@echo "DIR_INSTALL is not defined, please add a relative or absolute path to install fptest.h and fptest.dll"
+else
+	cp $(BINS) 	$(DIR_INSTALL)/$(BINS);
+	cp src/fptest.h $(DIR_INSTALL)/fptest.h
+endif
