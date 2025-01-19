@@ -124,6 +124,7 @@ ADDAPI extern f64_t         ADDCALL fp64_ulps( f64_t approx, f64_t exact );
 
 ADDAPI extern bool_t        ADDCALL fp32_equals( f32_t a, f32_t b );
 ADDAPI extern bool_t        ADDCALL fp64_equals( f64_t a, f64_t b );
+
 ADDAPI extern bool_t        ADDCALL fp32_equals_sign( f32_t a, f32_t b );
 ADDAPI extern bool_t        ADDCALL fp64_equals_sign( f64_t a, f64_t b );
 

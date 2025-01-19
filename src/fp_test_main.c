@@ -1040,7 +1040,7 @@ f64_t ADDCALL f64_rel_error_for_reals( f64_t x, f64_t y )
     return ( ret );
 }
 
-cstr_t ADDCALL f32_sprint_digits_radix2( char buff [ 32 + 1 + 2 ], char_t sepparator, f32_t x )
+cstr_t ADDCALL fp32_sprint_digits_radix2( char buff [ 32 + 1 + 2 ], char_t sepparator, f32_t x )
 {
     static const u16_t index[ 2 ] = { FW0, FW1, };
 
@@ -1077,7 +1077,7 @@ cstr_t ADDCALL f32_sprint_digits_radix2( char buff [ 32 + 1 + 2 ], char_t seppar
     return ( buff );
 }
 
-cstr_t ADDCALL f64_sprint_digits_radix2( char buff [ 64 + 1 + 2 ], char_t sepparator, f64_t x )
+cstr_t ADDCALL fp64_sprint_digits_radix2( char buff [ 64 + 1 + 2 ], char_t sepparator, f64_t x )
 {
     static const u16_t index[ 4 ] = { DW0, DW1, DW2, DW3, };
 
@@ -2202,6 +2202,10 @@ static void fp_pin_cpu()
     sched_setaffinity(0, sizeof(set), &set);
 }
 #endif
+
+/* Functions to count the time per call and ret */
+f32_t ADDCALL fp32_benchmark_mock_fun( f32_t x ) { volatile f32_t ret = 0.0; return ret; }
+f64_t ADDCALL fp64_benchmark_mock_fun( f64_t x ) { volatile f64_t ret = 0.0; return ret; }
 
 fp64_vec2_t ADDCALL fp32_benchmark_avg_time( f3232_t test_func )
 {
