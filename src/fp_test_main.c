@@ -2512,3 +2512,113 @@ void ADDCALL fp64_print_benchmark_avg_time( cstr_t fname, f6464_t fptr6464 )
 
     printf("%s took: %3.3f, %3.3f\n", fname, tr.x0, tr.x1);
 }
+
+
+/* >> Arbitrary Radix-10 Arithmetics */
+static u32_t fp_radix10_get_fpi( cstr_t x )
+{
+    u32_t ret;
+
+    const char_t * p = strchr( x, '.' );
+
+    if( p == NULLPTR )
+    {
+        ret = strlen( x );
+    }
+    else
+    {
+        ret = (u32_t) ( p - x );
+    }
+
+    return ( ret );
+}
+
+#define FP_RADIX10 10
+
+static u32_t fp_radix10_count_digits( u64_t n )
+{
+    u32_t ret = 1;
+
+    while( n > (FP_RADIX10 - 1) )
+    {
+        n = n / FP_RADIX10;
+        ret++;
+    }
+
+    return ( ret );
+}
+
+static u64_t fp_radix10_10powers( u8_t n )
+{
+    u64_t ret = 1u; /* exact result when n = 0 */
+
+    u64_t x2 = FP_RADIX10;
+
+    while ( n > 0 )
+    {
+        if ( n & 1 )
+        {
+            ret = ret * x2;
+        }
+
+        n = n >> 1;
+
+        if ( n > 0 )
+        {
+            x2 = x2 * x2;
+        }
+    }
+
+    return ( ret );
+}
+
+fp_radix10_t ADDCALL fp_radix10_add( fp_radix10_t a, fp_radix10_t b )
+{
+    fp_radix10_t ret = { 0 };
+
+    if( (ret.ok = ( a.ok && b.ok )) )
+    {
+        ret.fr = a.fr + b.fr;
+
+        u64_t carry = 0;
+
+        if( (ret.ok = ( ret.fr >= a.fr && ret.fr >= b.fr )) ) /* no overflow */
+        {
+            const u32_t nd_fr_a = fp_radix10_count_digits( a.fr   );
+            const u32_t nd_fr_b = fp_radix10_count_digits( b.fr   );
+            const u32_t nd_fr_r = fp_radix10_count_digits( ret.fr );
+            const u32_t nd_fr_m = nd_fr_a > nd_fr_b ? nd_fr_a : nd_fr_b;
+
+            if( nd_fr_r > nd_fr_m )
+            {
+                carry = 1;
+                ret.fr -= fp_radix10_10powers( nd_fr_m );
+            }
+        }
+
+        printf("0.%llu\n0.%llu\n%llu.%llu\n", a.fr, b.fr, carry, ret.fr);
+
+    }
+    else
+    {
+        /* NOP: already initialized to zero */
+    }
+
+    return ( a );
+}
+/* << Arbitrary Radix-10 Arithmetics */
+
+
+/* >> Random Numbers */
+f32_t fp32_rand_in_range( f32_t min, f32_t max )
+{
+    const f32_t scale = rand() / (f32_t) RAND_MAX;
+    return min + scale * ( max - min );
+}
+
+f64_t fp64_rand_in_range( f64_t min, f64_t max )
+{
+    const f64_t scale = rand() / (f64_t) RAND_MAX;
+    return min + scale * ( max - min );
+}
+/* << Random Numbers */

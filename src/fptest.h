@@ -85,6 +85,15 @@ typedef enum
     FP80,
 } fp_width_t;
 
+typedef struct
+{
+    u64_t   dc;
+    u64_t   fr;
+    i8_t    s ;
+    bool_t  ok;
+    /* data */
+} fp_radix10_t;
+
 /* You should define ADD_EXPORTS *only* when building the DLL. */
 #ifdef ADD_EXPORTS
   #define ADDAPI __declspec(dllexport)
@@ -194,6 +203,15 @@ ADDAPI extern f64_t         ADDCALL fp64_benchmark_mock_fun( f64_t x );
 
 #define FP32_BENCHMARK_MATH_FUNCTION(test_fun) fp32_benchmark_core_ns_per_call( (test_fun), fp32_benchmark_mock_fun )
 #define FP64_BENCHMARK_MATH_FUNCTION(test_fun) fp64_benchmark_core_ns_per_call( (test_fun), fp64_benchmark_mock_fun )
+
+/* >> Random Numbers */
+ADDAPI extern f32_t         ADDCALL fp32_rand_in_range( f32_t min, f32_t max );
+ADDAPI extern f64_t         ADDCALL fp64_rand_in_range( f64_t min, f64_t max );
+/* << Random Numbers */
+
+/* >> Arbitrary Radix-10 Arithmetics */
+ADDAPI extern fp_radix10_t  ADDCALL fp_radix10_add( fp_radix10_t a, fp_radix10_t b );
+/* << Arbitrary Radix-10 Arithmetics */
 
 /* PUBLIC UTILITIES */
 #define NULLPTR ((void*) 0)
