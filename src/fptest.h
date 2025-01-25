@@ -155,6 +155,9 @@ ADDAPI extern cstr_t        ADDCALL fp64_sprint_digits_radix2( char_t buff [ 64 
 ADDAPI extern f32_t         ADDCALL fp32_next_float( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_next_float( f64_t x );
 
+ADDAPI extern f32_t         ADDCALL fp32_prev_float( f32_t x );
+ADDAPI extern f64_t         ADDCALL fp64_prev_float( f64_t x );
+
 ADDAPI extern f32_t         ADDCALL fp32_mount_bitfields( u32_t s, u32_t e, u32_t m );
 ADDAPI extern f64_t         ADDCALL fp64_mount_bitfields( u64_t s, u64_t e, u64_t m );
 

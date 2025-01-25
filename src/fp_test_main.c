@@ -1270,6 +1270,132 @@ f64_t ADDCALL fp64_next_float( f64_t x )
     return ( ret );
 }
 
+f32_t ADDCALL fp32_prev_float( f32_t x )
+{
+    f32_t ret;
+
+    fpset_t type = fp32_get_subset( x );
+
+    switch (type)
+    {
+        case (FP_TYPE_NAN):
+        {
+            ret = x;
+            break;
+        }
+
+        case(FP_TYPE_INFINITE):
+        {
+            if( x < 0.0 )
+            {
+                ret = -m_inff32.f;
+            }
+
+            else
+            {
+                ret = m_maxf32.f;
+            }
+
+            break;
+        }
+
+        case(FP_TYPE_ZERO):
+        case(FP_TYPE_NORMAL):
+        case(FP_TYPE_SUBNORMAL):
+        default:
+        {
+            fw_t this = { .f = x };
+
+            u32_t s = ( this.w[ FW0 ] & 0x8000 ) >> 15;
+
+            i32_t e = ( this.w[ FW0 ] & 0x7F80 ) >> 7;
+
+            u32_t m = ( ( (u32_t) (this.w[ FW0 ] & 0x007F) ) << 16 ) | ( (u32_t) (  this.w[ FW1 ] & 0xFFFF ) );
+
+            if( s == 0 && e == 0 && m == 0 )
+            {
+                s = 1;
+            }
+
+            else if( s == 1 ) /* when x is negative, to move x->x + dx requires to substract values from e, m */
+            {
+                if( m == 0x7FFFFF ) { e += 1; m = 0; } else { m += 1; }
+            }
+
+            else
+            {
+                if( m == 0 ) { e -= 1; m = 0x7FFFFF; } else { m -= 1; }
+            }
+
+            ret = fp32_mount_bitfields( s, e, m );
+        }
+    }
+
+    return ( ret );
+}
+
+f64_t ADDCALL fp64_prev_float( f64_t x )
+{
+    f64_t ret;
+
+    fpset_t type = fp64_get_subset( x );
+
+    switch (type)
+    {
+        case (FP_TYPE_NAN):
+        {
+            ret = x;
+            break;
+        }
+
+        case(FP_TYPE_INFINITE):
+        {
+            if( x < 0.0 )
+            {
+                ret = -m_inff64.f;
+            }
+
+            else
+            {
+                ret = m_maxf64.f;
+            }
+
+            break;
+        }
+
+        case(FP_TYPE_ZERO):
+        case(FP_TYPE_NORMAL):
+        case(FP_TYPE_SUBNORMAL):
+        default:
+        {
+            dw_t this = { .f = x };
+
+            u64_t s = ( this.w[ DW0 ] & 0x8000 ) >> 15;
+            u64_t e = ( this.w[ DW0 ] & 0x7FF0  ) >> 4;
+            u64_t m =   this.u        & 0x000FFFFFFFFFFFFFllu;
+
+            if( s == 0 && e == 0 && m == 0 )
+            {
+                s = 1;
+            }
+
+            else if( s == 1 ) /* when x is negative, to move x->x + dx requires to add values from e, m */
+            {
+                if( m == 0x000FFFFFFFFFFFFF ) { e += 1; m = 0; } else { m += 1; }
+            }
+
+            else
+            {
+                if( m == 0 ) { e -= 1; m = 0x000FFFFFFFFFFFFF; } else { m -= 1; }
+            }
+
+            ret = fp64_mount_bitfields( s, e, m );
+        }
+    }
+
+    return ( ret );
+}
+
 /*
  * fp32_get_triplet
  *
