@@ -1396,6 +1396,62 @@ f64_t ADDCALL fp64_prev_float( f64_t x )
     return ( ret );
 }
 
+f32_t ADDCALL fp32_jump_nulp( f32_t x, i32_t n )
+{
+    f32_t ret = x;
+
+    if( n > 0 )
+    {
+        while(n--)
+        {
+            ret = fp32_next_float(ret);
+        }
+    }
+
+    else if( n < 0 )
+    {
+        while(n++)
+        {
+            ret = fp32_prev_float(ret);
+        }
+    }
+
+    else
+    {
+        /* NOP: ret already set to x */
+    }
+
+    return ( ret );
+}
+
+f64_t ADDCALL fp64_jump_nulp( f64_t x, i32_t n )
+{
+    f64_t ret = x;
+
+    if( n > 0 )
+    {
+        while(n--)
+        {
+            ret = fp64_next_float(ret);
+        }
+    }
+
+    else if( n < 0 )
+    {
+        while(n++)
+        {
+            ret = fp64_prev_float(ret);
+        }
+    }
+
+    else
+    {
+        /* NOP: ret already set to x */
+    }
+
+    return ( ret );
+}
+
 /*
  * fp32_get_triplet
  *
@@ -1995,7 +2051,7 @@ f64_t ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_t * control_points, f6
  *          The state is expected to be a tiny structure, so there is no problem to hold it in the stack.
  */
 
-void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] )
+void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp32_vec2_t minmax )
 {
     const bool_t reset_grow_frac = ( g_fpenv.fp32_grow_frac == 0.0f );
     const bool_t reset_ctrl_ulps = ( g_fpenv.fp32_ctrl_ulps == 0.0f );
@@ -2016,8 +2072,8 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
 
 
     /* >> MAIN ANALYSIS */
-    const f32_t x_min   = -fp32_get_named_fp_in_real_line( NAMED_FP_INF );
-    const f32_t x_max   = +fp32_get_named_fp_in_real_line( NAMED_FP_INF );
+    const f32_t x_min   = minmax.x0;
+    const f32_t x_max   = minmax.x1;
 
     f32_t x_curr        = x_min;
     /* << MAIN ANALYSIS */
@@ -2122,7 +2178,7 @@ void ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t
     }/* << SERVICE: HIST ULP */
 }
 
-void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] )
+void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp64_vec2_t minmax )
 {
     const bool_t reset_grow_frac = ( g_fpenv.fp64_grow_frac == 0.0 );
     const bool_t reset_ctrl_ulps = ( g_fpenv.fp64_ctrl_ulps == 0.0 );
@@ -2133,8 +2189,8 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t
     if( reset_ctrl_ulps ) { g_fpenv.fp64_ctrl_ulps = 100.0f; }
 
     /* >> MAIN ANALYSIS */
-    const f64_t x_min   = -fp64_get_named_fp_in_real_line( NAMED_FP_INF );
-    const f64_t x_max   = +fp64_get_named_fp_in_real_line( NAMED_FP_INF );
+    const f64_t x_min   = minmax.x0;
+    const f64_t x_max   = minmax.x1;
 
     f64_t x_curr        = x_min;
     /* << MAIN ANALYSIS */
@@ -2546,7 +2602,7 @@ void ADDCALL fp32_print_benchmark_avg_time_evolution( f3232_t fptr3232 )
             {
                 n++;
                 f64_t a = 1./((f64_t)n);
-                f64_t b = 1 - a;
+                f64_t b = 1. - a;
                 mean = a*response_time.x0 + b*mean;
                 sd   = a*response_time.x1 + b*sd;
 
@@ -2597,7 +2653,7 @@ void ADDCALL fp64_print_benchmark_avg_time_evolution( f6464_t fptr6464 )
             {
                 n++;
                 f64_t a = 1./((f64_t)n);
-                f64_t b = 1 - a;
+                f64_t b = 1. - a;
                 mean = a*response_time.x0 + b*mean;
                 sd   = a*response_time.x1 + b*sd;
 
@@ -2734,7 +2790,6 @@ fp_radix10_t ADDCALL fp_radix10_add( fp_radix10_t a, fp_radix10_t b )
 }
 /* << Arbitrary Radix-10 Arithmetics */
 
-
 /* >> Random Numbers */
 f32_t fp32_rand_in_range( f32_t min, f32_t max )
 {
@@ -2748,3 +2803,142 @@ f64_t fp64_rand_in_range( f64_t min, f64_t max )
     return min + scale * ( max - min );
 }
 /* << Random Numbers */
+
+/* >> Tests  */
+extern void ADDCALL fp64_test_sqrt( f6464_t tested_sqrt, bool_t active )
+{
+    if( active )
+    {
+        fp64_vec2_t valid_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };
+        fp64_range_analyzer("sqrt", tested_sqrt, sqrt , fp64_geometric_grow, 1.0, 2.0, NULL, valid_range);
+
+        /* valid range is all range */
+        /*fp64_vec2_t all_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };*/
+        /*fp64_range_analyzer("sqrt", tested_sqrt, sqrt , fp64_geometric_grow, 1.0, 2.0, NULL, all_range);*/
+
+        fp64_print_benchmark_avg_time( "math_sqrt", tested_sqrt );
+        fp64_print_benchmark_avg_time( "cstd_sqrt", sqrt );
+    }
+}
+
+extern void ADDCALL fp64_test_exp( f6464_t tested_exp, bool_t active )
+{
+    if( active )
+    {
+        fp64_vec2_t valid_range = { .x0 = -709., .x1 = +709. };
+        fp64_range_analyzer("exp", tested_exp, exp, fp64_geometric_grow, 1.0, 8.0, NULL, valid_range);
+
+        fp64_vec2_t all_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };
+        fp64_range_analyzer("exp", tested_exp, exp, fp64_geometric_grow, 1.0, 8.0, NULL, all_range);
+
+        fp64_print_benchmark_avg_time("math_exp", tested_exp);
+        fp64_print_benchmark_avg_time("cstd_exp", exp);
+    }
+}
+
+extern void ADDCALL fp64_test_log( f6464_t tested_log, bool_t active )
+{
+    if( active )
+    {
+        fp64_vec2_t valid_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };
+        fp64_range_analyzer("log", tested_log, log, fp64_geometric_grow, 1.0, 2.0, NULL, valid_range);
+
+        /* valid range is all range */
+        /*fp64_vec2_t valid_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };*/
+        /*fp64_range_analyzer("log", tested_log, log, fp64_geometric_grow, 1.0, 2.0, NULL, valid_range);*/
+
+        fp64_print_benchmark_avg_time("math_log", tested_log);
+        fp64_print_benchmark_avg_time("cstd_log", log);
+    }
+}
+
+extern void ADDCALL fp64_test_sin(f6464_t tested_sin, bool_t active)
+{
+    if( active )
+    {
+        fp64_vec2_t valid_range = { .x0 = -1.e4, .x1 = +1.e4, };
+        fp64_range_analyzer("sin", tested_sin, sin, fp64_geometric_grow, 1.0, 8.0, NULL, valid_range);
+
+        fp64_vec2_t all_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };
+        fp64_range_analyzer("sin", tested_sin, sin, fp64_geometric_grow, 1.0, 8.0, NULL, all_range);
+
+        fp64_print_benchmark_avg_time("math_sin", tested_sin);
+        fp64_print_benchmark_avg_time("cstd_sin", sin);
+    }
+}
+
+extern void ADDCALL fp64_test_cos( f6464_t tested_cos, bool_t active )
+{
+    if( active )
+    {
+        fp64_vec2_t valid_range = { .x0 = -1.e4, .x1 = +1.e4, };
+        fp64_range_analyzer("cos", tested_cos, cos, fp64_geometric_grow, 1.0, 8.0, NULL, valid_range);
+
+        fp64_vec2_t all_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };
+        fp64_range_analyzer("cos", tested_cos, cos, fp64_geometric_grow, 1.0, 8.0, NULL, all_range);
+
+        fp64_print_benchmark_avg_time("math_cos", tested_cos);
+        fp64_print_benchmark_avg_time("cstd_cos", cos);
+    }
+}
+
+extern void ADDCALL fp64_test_asin( f6464_t tested_asin, bool_t active )
+{
+    if( active )
+    {
+        fp64_vec2_t valid_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };
+        fp64_range_analyzer("asin", tested_asin, asin, fp64_geometric_grow, 1.0, 8.0, NULL, valid_range);
+
+        /* valid_range is equal all_range */
+        /*fp64_vec2_t all_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };*/
+        /*fp64_range_analyzer("asin", tested_asin, asin, fp64_geometric_grow, 1.0, 8.0, NULL, all_range);*/
+
+        fp64_print_benchmark_avg_time("math_asin", tested_asin);
+        fp64_print_benchmark_avg_time("cstd_asin", asin);
+    }
+}
+
+f64_t (* m_powy )(f64_t, f64_t);
+
+f64_t m_y;
+
+f64_t tested_powy( f64_t x )
+{
+    return ( m_powy ( x, m_y ) );
+}
+
+f64_t expected_powy( f64_t x )
+{
+    return ( pow ( x, m_y ) );
+}
+
+extern void ADDCALL fp64_test_pow( f64_t (*tested_pow)(f64_t, f64_t) , bool_t active )
+{
+    m_powy = tested_pow;
+
+    if( active )
+    {
+        fp64_vec2_t valid_range;
+
+        m_y = 0.0;
+        do
+        {
+            valid_range.x1 = +exp( 709. / m_y );
+            valid_range.x0 = -valid_range.x0;
+            char description[120] = { '\0' };
+            sprintf( description, "pow y=%f", m_y );
+            fp64_range_analyzer(description, tested_powy, expected_powy, fp64_geometric_grow, 1.0, 8.0, NULL, valid_range);
+
+            fp64_print_benchmark_avg_time("math_pow", tested_powy);
+            fp64_print_benchmark_avg_time("cstd_pow", expected_powy);
+            m_y += 0.5;
+        }
+        while( m_y < 10.0 );
+
+        /* valid_range is equal all_range */
+        /*fp64_vec2_t all_range = { .x0 = -m_inff64.f, .x1 = +m_inff64.f, };*/
+        /*fp64_range_analyzer("asin", tested_asin, asin, fp64_geometric_grow, 1.0, 8.0, NULL, all_range);*/
+
+    }
+}
+/* << Tests */

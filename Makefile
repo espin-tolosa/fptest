@@ -8,6 +8,10 @@ DIR_SRC		:=	 src
 DIR_CUT		:=	 test
 DIR_INSTALL :=	 ../math/vendor/fptest
 
+TESTED_FUNCS:=	PREV_FLOAT NEXT_FLOAT
+
+TESTED_FUNCS:=$(addprefix -DTEST_FP_, $(TESTED_FUNCS) )
+
 # Sanitizers
 CC_ASAN		:=
 LD_ASAN		:=
@@ -48,7 +52,7 @@ clean:
 # 1. -Wno-gnu-line-marker included for: clang -Wpedantic -save-temps, (see https://github.com/llvm/llvm-project/issues/63284)
 
 test:
-	@$(CC) -c -o test_dll.o test_dll.c
+	@$(CC) -c -o test_dll.o test_dll.c $(TESTED_FUNCS)
 	@$(CC) -o test_dll.exe -s test_dll.o -L. -lfptest
 	./test_dll.exe
 

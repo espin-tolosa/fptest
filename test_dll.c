@@ -6,6 +6,16 @@
 #include "src/fptest.h"
 #include "src/fp_test_internals.h"
 
+#define TEST_FP(test_func, code)
+#   ifdef test_func
+    fprintf(stderr, "[INFO] Testing %s", ##test_func);
+    {
+        code
+    }
+    fprintf(stderr, "%50s\n", "[ OK ]");
+#   endif
+
+
 f32_t fp32_lhs( f32_t x )
 {
     f32_t ret = x;
@@ -60,12 +70,12 @@ f32_t f32_geometric_grow( f32_t x )
 
 f32_t f32_stepping_grow( f32_t x )
 {
-    return ( f32_next_float( x ) );
+    return ( fp32_next_float( x ) );
 }
 
 f32_t f32_arithmetic_grow( f32_t x )
 {
-    return ( f32_next_float( x ) );
+    return ( fp32_next_float( x ) );
 }
 
 f64_t f64_geometric_grow( f64_t x )
@@ -79,12 +89,12 @@ f64_t f64_geometric_grow( f64_t x )
 
 f64_t f64_stepping_grow( f64_t x )
 {
-    return ( f64_next_float( x ) );
+    return ( fp64_next_float( x ) );
 }
 
 f64_t f64_arithmetic_grow( f64_t x )
 {
-    return ( f64_next_float( x ) );
+    return ( fp64_next_float( x ) );
 }
 
 int main( void )
@@ -93,6 +103,48 @@ int main( void )
     g_fpenv.log_completation_remove_history     = TRUE;
 
     g_fpenv.debug_next_x_inside_boundaries      = FALSE;
+
+#   ifdef TEST_FP_PREV_FLOAT
+    fprintf(stderr, "[INFO] Testing %s", "TEST_FP_PREV_FLOAT");
+    {
+        f64_t x_2, x_1, x0;
+
+        /* Test the order: prev^2(x) < prev(x) < x */
+        x0  = 1.0;
+        x_1 = fp64_prev_float( x0  );
+        x_2 = fp64_prev_float( x_1 );
+
+        assert( ( (x_2 < x_1) && (x_1 < x0) ) );
+
+        /* Test the jump: +0 -> -0 -> -eps*/
+        x0  = +0.0;
+        x_1 = fp64_prev_float( x0 );
+        x_2 = fp64_prev_float( x_1 );
+        assert( (x0 == x_1) && (x_2 < x_1) );
+    }
+    fprintf(stderr, "%50s\n", "[ OK ]");
+#   endif
+
+#   ifdef TEST_FP_NEXT_FLOAT
+    fprintf(stderr, "[INFO] Testing %s", "TEST_FP_NEXT_FLOAT");
+    {
+        f64_t x0, x1, x2;
+
+        /* Test the order: x < prev(x) < prev^2(x) */
+        x0  = 1.0;
+        x1 = fp64_next_float( x0  );
+        x2 = fp64_next_float( x1 );
+
+        assert( ( (x0 < x1) && (x1 < x2) ) );
+
+        /* Test the jump: -0 -> +0 -> +eps*/
+        x0  = -0.0;
+        x1 = fp64_next_float( x0 );
+        x2 = fp64_next_float( x1 );
+        assert( (x0 == x1) && (x1 < x2) );
+    }
+    fprintf(stderr, "%50s\n", "[ OK ]");
+#   endif
 
 #if 0
    /* ULPS */
