@@ -155,6 +155,9 @@ ADDAPI extern cstr_t        ADDCALL fp64_sprint_digits_radix2( char_t buff [ 64 
 ADDAPI extern f32_t         ADDCALL fp32_next_float( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_next_float( f64_t x );
 
+ADDAPI extern f32_t         ADDCALL fp32_jump_nulp( f32_t x, i32_t n );
+ADDAPI extern f64_t         ADDCALL fp64_jump_nulp( f64_t x, i32_t n );
+
 ADDAPI extern f32_t         ADDCALL fp32_prev_float( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_prev_float( f64_t x );
 
@@ -179,8 +182,8 @@ ADDAPI extern fp64_vec2_t   ADDCALL fp64_find_control_boundaries( f64_t at_x, co
 ADDAPI extern f32_t         ADDCALL fp32_next_x( f32_t x, f32_t frac, const f32_t * control_points, f64_t round_ulps, i32_t n );
 ADDAPI extern f64_t         ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_t * control_points, f64_t round_ulps, i32_t n );
 
-ADDAPI extern void          ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] );
-ADDAPI extern void          ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ] );
+ADDAPI extern void          ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp32_vec2_t minmax );
+ADDAPI extern void          ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp64_vec2_t minmax );
 
 ADDAPI extern u64_vec2_t*   ADDCALL fp_histogram_set_ulp( f64_t ulp, const void * x, fp_width_t precision, f64_t reject );
 ADDAPI extern u16_t         ADDCALL fp_histogram_compute_table_hash( fptriplet_t triplet, fpset_t type, i16_t emax, i16_t emin );
@@ -203,6 +206,14 @@ ADDAPI extern f64_t         ADDCALL fp64_benchmark_core_ns_per_call( f6464_t tes
 
 ADDAPI extern f32_t         ADDCALL fp32_benchmark_mock_fun( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_benchmark_mock_fun( f64_t x );
+
+ADDAPI extern void          ADDCALL fp64_test_sqrt  ( f6464_t tested_sqrt, bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_exp   ( f6464_t tested_exp , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_log   ( f6464_t tested_log , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_sin   ( f6464_t tested_sin , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_cos   ( f6464_t tested_cos , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_asin  ( f6464_t tested_asin, bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_pow   ( f64_t (*tested_pow)(f64_t, f64_t) , bool_t active );
 
 #define FP32_BENCHMARK_MATH_FUNCTION(test_fun) fp32_benchmark_core_ns_per_call( (test_fun), fp32_benchmark_mock_fun )
 #define FP64_BENCHMARK_MATH_FUNCTION(test_fun) fp64_benchmark_core_ns_per_call( (test_fun), fp64_benchmark_mock_fun )
