@@ -29,10 +29,15 @@ typedef double              f64_t;
 typedef long double         f80_t;
 
 /* Function Pointers */
-typedef f32_t  ( *f3232_t   ) ( f32_t );
-typedef f64_t  ( *f6464_t   ) ( f64_t );
-typedef f80_t  ( *f8080_t   ) ( f80_t );
-typedef void   ( *fvoid64_t ) ( f64_t );
+typedef void   ( *fp_f2v_t ) ( f32_t );
+typedef void   ( *fp_d2v_t ) ( f64_t );
+
+typedef f32_t  ( *fp_f2f_t   ) ( f32_t );
+typedef f64_t  ( *fp_d2d_t   ) ( f64_t );
+typedef f80_t  ( *fr_e2e_t   ) ( f80_t );
+
+typedef f32_t  ( *fp_ff2f_t ) ( f32_t, f32_t );
+typedef f64_t  ( *fp_dd2d_t ) ( f64_t, f64_t );
 
 /* Composites */
 typedef struct { u32_t x0; u32_t x1;            } u32_vec2_t;
@@ -123,6 +128,67 @@ typedef struct
 
     f32_t  fp32_ctrl_ulps;
     f32_t  fp64_ctrl_ulps;
+
+    f64_t fp32_range_sqrt_min;
+    f64_t fp32_range_sqrt_max;
+    f64_t fp32_range_exp_min;
+    f64_t fp32_range_exp_max;
+    f64_t fp32_range_log_min;
+    f64_t fp32_range_log_max;
+    f64_t fp32_range_sin_min;
+    f64_t fp32_range_sin_max;
+    f64_t fp32_range_cos_min;
+    f64_t fp32_range_cos_max;
+    f64_t fp32_range_asin_min;
+    f64_t fp32_range_asin_max;
+    f64_t fp32_range_powy_min;
+    f64_t fp32_range_powy_max;
+
+    f64_t fp64_range_sqrt_min;
+    f64_t fp64_range_sqrt_max;
+    f64_t fp64_range_exp_min;
+    f64_t fp64_range_exp_max;
+    f64_t fp64_range_log_min;
+    f64_t fp64_range_log_max;
+    f64_t fp64_range_sin_min;
+    f64_t fp64_range_sin_max;
+    f64_t fp64_range_cos_min;
+    f64_t fp64_range_cos_max;
+    f64_t fp64_range_asin_min;
+    f64_t fp64_range_asin_max;
+    f64_t fp64_range_powy_min;
+    f64_t fp64_range_powy_max;
+
+    f64_t fp32_sqrt_accepted;
+    f64_t fp32_sqrt_rejected;
+    f64_t fp32_exp_accepted;
+    f64_t fp32_exp_rejected;
+    f64_t fp32_log_accepted;
+    f64_t fp32_log_rejected;
+    f64_t fp32_sin_accepted;
+    f64_t fp32_sin_rejected;
+    f64_t fp32_cos_accepted;
+    f64_t fp32_cos_rejected;
+    f64_t fp32_asin_accepted;
+    f64_t fp32_asin_rejected;
+    f64_t fp32_powy_accepted;
+    f64_t fp32_powy_rejected;
+
+    f64_t fp64_sqrt_accepted;
+    f64_t fp64_sqrt_rejected;
+    f64_t fp64_exp_accepted;
+    f64_t fp64_exp_rejected;
+    f64_t fp64_log_accepted;
+    f64_t fp64_log_rejected;
+    f64_t fp64_sin_accepted;
+    f64_t fp64_sin_rejected;
+    f64_t fp64_cos_accepted;
+    f64_t fp64_cos_rejected;
+    f64_t fp64_asin_accepted;
+    f64_t fp64_asin_rejected;
+    f64_t fp64_powy_accepted;
+    f64_t fp64_powy_rejected;
+
 } fpenv_t;
 
 extern ADDAPI fpenv_t g_fpenv;
@@ -182,8 +248,8 @@ ADDAPI extern fp64_vec2_t   ADDCALL fp64_find_control_boundaries( f64_t at_x, co
 ADDAPI extern f32_t         ADDCALL fp32_next_x( f32_t x, f32_t frac, const f32_t * control_points, f64_t round_ulps, i32_t n );
 ADDAPI extern f64_t         ADDCALL fp64_next_x( f64_t x, f64_t frac, const f64_t * control_points, f64_t round_ulps, i32_t n );
 
-ADDAPI extern void          ADDCALL fp32_range_analyzer( cstr_t desc, f3232_t lhs, f3232_t rhs, f3232_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp32_vec2_t minmax );
-ADDAPI extern void          ADDCALL fp64_range_analyzer( cstr_t desc, f6464_t lhs, f6464_t rhs, f6464_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp64_vec2_t minmax );
+ADDAPI extern void          ADDCALL fp32_range_analyzer( cstr_t desc, fp_f2f_t lhs, fp_f2f_t rhs, fp_f2f_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp32_vec2_t minmax );
+ADDAPI extern void          ADDCALL fp64_range_analyzer( cstr_t desc, fp_d2d_t lhs, fp_d2d_t rhs, fp_d2d_t next_x, f64_t accept, f64_t reject, u8_t state[ /* TBD: Size in bytes of the state */ ], fp64_vec2_t minmax );
 
 ADDAPI extern u64_vec2_t*   ADDCALL fp_histogram_set_ulp( f64_t ulp, const void * x, fp_width_t precision, f64_t reject );
 ADDAPI extern u16_t         ADDCALL fp_histogram_compute_table_hash( fptriplet_t triplet, fpset_t type, i16_t emax, i16_t emin );
@@ -192,28 +258,36 @@ ADDAPI extern cstr_t        ADDCALL fp_histogram_get_erange( i16_t hash, i16_t e
 ADDAPI extern f32_t         ADDCALL fp32_geometric_grow( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_geometric_grow( f64_t x );
 
-ADDAPI extern void          ADDCALL fp32_print_benchmark_avg_time_evolution( f3232_t fptr3232 );
-ADDAPI extern void          ADDCALL fp64_print_benchmark_avg_time_evolution( f6464_t fptr6464 );
+ADDAPI extern void          ADDCALL fp32_print_benchmark_avg_time_evolution( fp_f2f_t fptr3232 );
+ADDAPI extern void          ADDCALL fp64_print_benchmark_avg_time_evolution( fp_d2d_t fptr6464 );
 
-ADDAPI extern void          ADDCALL fp32_print_benchmark_avg_time( cstr_t fname, f3232_t fptr3232 );
-ADDAPI extern void          ADDCALL fp64_print_benchmark_avg_time( cstr_t fname, f6464_t fptr6464 );
+ADDAPI extern void          ADDCALL fp32_print_benchmark_avg_time( cstr_t fname, fp_f2f_t fptr3232 );
+ADDAPI extern void          ADDCALL fp64_print_benchmark_avg_time( cstr_t fname, fp_d2d_t fptr6464 );
 
-ADDAPI extern fp64_vec2_t   ADDCALL  fp32_benchmark_avg_time( f3232_t test_func );
-ADDAPI extern fp64_vec2_t   ADDCALL  fp64_benchmark_avg_time( f6464_t test_func );
+ADDAPI extern fp64_vec2_t   ADDCALL  fp32_benchmark_avg_time( fp_f2f_t test_func );
+ADDAPI extern fp64_vec2_t   ADDCALL  fp64_benchmark_avg_time( fp_d2d_t test_func );
 
-ADDAPI extern f64_t         ADDCALL fp32_benchmark_core_ns_per_call( f3232_t test_fun, f3232_t mock_fun );
-ADDAPI extern f64_t         ADDCALL fp64_benchmark_core_ns_per_call( f6464_t test_fun, f6464_t mock_fun );
+ADDAPI extern f64_t         ADDCALL fp32_benchmark_core_ns_per_call( fp_f2f_t test_fun, fp_f2f_t mock_fun );
+ADDAPI extern f64_t         ADDCALL fp64_benchmark_core_ns_per_call( fp_d2d_t test_fun, fp_d2d_t mock_fun );
 
 ADDAPI extern f32_t         ADDCALL fp32_benchmark_mock_fun( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_benchmark_mock_fun( f64_t x );
 
-ADDAPI extern void          ADDCALL fp64_test_sqrt  ( f6464_t tested_sqrt, bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_exp   ( f6464_t tested_exp , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_log   ( f6464_t tested_log , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_sin   ( f6464_t tested_sin , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_cos   ( f6464_t tested_cos , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_asin  ( f6464_t tested_asin, bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_pow   ( f64_t (*tested_pow)(f64_t, f64_t) , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_sqrt  ( fp_f2f_t  tested_sqrt, bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_exp   ( fp_f2f_t  tested_exp , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_log   ( fp_f2f_t  tested_log , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_sin   ( fp_f2f_t  tested_sin , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_cos   ( fp_f2f_t  tested_cos , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_asin  ( fp_f2f_t  tested_asin, bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_pow   ( fp_ff2f_t tested_pow , bool_t active );
+
+ADDAPI extern void          ADDCALL fp64_test_sqrt  ( fp_d2d_t  tested_sqrt, bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_exp   ( fp_d2d_t  tested_exp , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_log   ( fp_d2d_t  tested_log , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_sin   ( fp_d2d_t  tested_sin , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_cos   ( fp_d2d_t  tested_cos , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_asin  ( fp_d2d_t  tested_asin, bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_pow   ( fp_dd2d_t tested_pow , bool_t active );
 
 #define FP32_BENCHMARK_MATH_FUNCTION(test_fun) fp32_benchmark_core_ns_per_call( (test_fun), fp32_benchmark_mock_fun )
 #define FP64_BENCHMARK_MATH_FUNCTION(test_fun) fp64_benchmark_core_ns_per_call( (test_fun), fp64_benchmark_mock_fun )
