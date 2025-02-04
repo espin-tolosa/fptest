@@ -39,6 +39,8 @@ typedef f80_t  ( *fr_e2e_t   ) ( f80_t );
 typedef f32_t  ( *fp_ff2f_t ) ( f32_t, f32_t );
 typedef f64_t  ( *fp_dd2d_t ) ( f64_t, f64_t );
 
+typedef f64_t  ( *fp_di162d_t ) ( f64_t x, i16_t n );
+
 /* Composites */
 typedef struct { u32_t x0; u32_t x1;            } u32_vec2_t;
 typedef struct { f32_t x0; f32_t x1;            } fp32_vec2_t;
@@ -273,21 +275,21 @@ ADDAPI extern f64_t         ADDCALL fp64_benchmark_core_ns_per_call( fp_d2d_t te
 ADDAPI extern f32_t         ADDCALL fp32_benchmark_mock_fun( f32_t x );
 ADDAPI extern f64_t         ADDCALL fp64_benchmark_mock_fun( f64_t x );
 
-ADDAPI extern void          ADDCALL fp32_test_sqrt  ( fp_f2f_t  tested_sqrt, bool_t active );
-ADDAPI extern void          ADDCALL fp32_test_exp   ( fp_f2f_t  tested_exp , bool_t active );
-ADDAPI extern void          ADDCALL fp32_test_log   ( fp_f2f_t  tested_log , bool_t active );
-ADDAPI extern void          ADDCALL fp32_test_sin   ( fp_f2f_t  tested_sin , bool_t active );
-ADDAPI extern void          ADDCALL fp32_test_cos   ( fp_f2f_t  tested_cos , bool_t active );
-ADDAPI extern void          ADDCALL fp32_test_asin  ( fp_f2f_t  tested_asin, bool_t active );
-ADDAPI extern void          ADDCALL fp32_test_pow   ( fp_ff2f_t tested_pow , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_sqrt      ( fp_f2f_t      tested_sqrt     , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_exp       ( fp_f2f_t      tested_exp      , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_log       ( fp_f2f_t      tested_log      , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_sin       ( fp_f2f_t      tested_sin      , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_cos       ( fp_f2f_t      tested_cos      , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_asin      ( fp_f2f_t      tested_asin     , bool_t active );
+ADDAPI extern void          ADDCALL fp32_test_pow       ( fp_ff2f_t     tested_pow      , bool_t active );
 
-ADDAPI extern void          ADDCALL fp64_test_sqrt  ( fp_d2d_t  tested_sqrt, bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_exp   ( fp_d2d_t  tested_exp , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_log   ( fp_d2d_t  tested_log , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_sin   ( fp_d2d_t  tested_sin , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_cos   ( fp_d2d_t  tested_cos , bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_asin  ( fp_d2d_t  tested_asin, bool_t active );
-ADDAPI extern void          ADDCALL fp64_test_pow   ( fp_dd2d_t tested_pow , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_sqrt      ( fp_d2d_t      tested_sqrt     , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_exp       ( fp_d2d_t      tested_exp      , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_log       ( fp_d2d_t      tested_log      , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_sin       ( fp_d2d_t      tested_sin      , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_cos       ( fp_d2d_t      tested_cos      , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_asin      ( fp_d2d_t      tested_asin     , bool_t active );
+ADDAPI extern void          ADDCALL fp64_test_pow       ( fp_dd2d_t     tested_pow      , bool_t active );
 
 #define FP32_BENCHMARK_MATH_FUNCTION(test_fun) fp32_benchmark_core_ns_per_call( (test_fun), fp32_benchmark_mock_fun )
 #define FP64_BENCHMARK_MATH_FUNCTION(test_fun) fp64_benchmark_core_ns_per_call( (test_fun), fp64_benchmark_mock_fun )

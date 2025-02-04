@@ -2287,10 +2287,12 @@ void ADDCALL fp64_range_analyzer( cstr_t desc, fp_d2d_t lhs, fp_d2d_t rhs, fp_d2
         /* << SERVICE: ULP */
 
 //      TODO: add callback to log files
-//        if(curr_ulp > reject)
-//        {
-//            printf("%.15e, %f\n", x_curr, curr_ulp);
-//        }
+        if(curr_ulp > reject)
+        {
+            union {double f; u64_t i;} u = {x_curr};
+            u32_t ix = u.i>>32 & 0x7fffffff;
+            printf("%x, %.15e, %f\n", ix, x_curr, curr_ulp);
+        }
 
         {/* >> SERVICE: HISTOGRAM */
             u64_t npoints_in_range = 0;
@@ -2360,9 +2362,13 @@ f32_t ADDCALL fp32_geometric_grow( f32_t x )
 {
     static const f32_t default_ctrlp[ ] =
     {
+        -FP32_7PI,
+        -FP32_9PI4,
         -FP32_2PI,
+        -FP32_7PI4,
         -FP32_3PI2,
         -FP32_R4,
+        -FP32_5PI4,
         -FP32_PI,
         -FP32_EULER,
         -FP32_3PI4,
@@ -2385,8 +2391,12 @@ f32_t ADDCALL fp32_geometric_grow( f32_t x )
         +FP32_EULER,
         +FP32_PI,
         +FP32_R4,
+        +FP32_5PI4,
         +FP32_3PI2,
+        +FP32_7PI4,
         +FP32_2PI,
+        +FP32_9PI4,
+        +FP32_7PI,
     };
 
     return ( fp32_next_x( x, g_fpenv.fp32_grow_frac, default_ctrlp, g_fpenv.fp32_ctrl_ulps, SIZEOF( default_ctrlp ) ) );
@@ -2396,9 +2406,13 @@ f64_t ADDCALL fp64_geometric_grow( f64_t x )
 {
     static const f64_t default_ctrlp[ ] =
     {
+        -FP64_7PI,
+        -FP64_9PI4,
         -FP64_2PI,
+        -FP64_7PI4,
         -FP64_3PI2,
         -FP64_R4,
+        -FP64_5PI4,
         -FP64_PI,
         -FP64_EULER,
         -FP64_3PI4,
@@ -2420,9 +2434,13 @@ f64_t ADDCALL fp64_geometric_grow( f64_t x )
         +FP64_3PI4,
         +FP64_EULER,
         +FP64_PI,
+        +FP64_5PI4,
         +FP64_R4,
         +FP64_3PI2,
+        +FP64_7PI4,
         +FP64_2PI,
+        +FP64_9PI4,
+        +FP64_7PI,
     };
 
     return ( fp64_next_x( x, g_fpenv.fp64_grow_frac, default_ctrlp, g_fpenv.fp64_ctrl_ulps, SIZEOF( default_ctrlp ) ) );
