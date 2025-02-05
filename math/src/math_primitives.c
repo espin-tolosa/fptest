@@ -210,7 +210,7 @@ extern dnorm_t math_cwnormalize ( f64_t x, u16_t type )
 
 extern f64_t math_cwsetexp ( f64_t x, i16_t n)
 {
-    dw_t result = { .d = math_significand( x ) };
+    dw_t result;
 
 	i16_t abs_n;
 
@@ -239,9 +239,20 @@ extern f64_t math_cwsetexp ( f64_t x, i16_t n)
 		}
 	}
 
-    result.w[ W0 ] = result.w[ W0 ] | ( ( n + DBIAS ) << DOFF );
+	else
+	{
+		result.d = math_significand( x );
 
-    return result.d;
+		if( ( n + EMAX ) <= 0 )
+		{
+			result.u	= result.u | ( 0x8000000000000LLu >> ( (u32_t) ( -( n + EMAX ) ) ) );
+			n 			= -EMAX;
+		}
+
+		result.w[ W0 ] = result.w[ W0 ] | ( ( n + EMAX ) << DOFF );
+	}
+
+    return ( result.d );
 }
 
 /* NOT IN USE */
