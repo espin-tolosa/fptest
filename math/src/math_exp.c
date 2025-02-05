@@ -32,9 +32,17 @@ extern f64_t math_exp( f64_t x )
 			{
 				const f128_t rg = math_exp_imp( x );
 
-				f128_t xn = math_cwsetexp( 2., m_xn  );
+				f128_t scal = 1.0L;
 
-				result.f.d = 2.L * xn * rg;
+				if( m_xn > 0 )
+				{
+					m_xn = m_xn - 1;
+					scal = 2.0L;
+				}
+
+				f128_t xn = math_cwsetexp( 0.5, m_xn  );
+
+				result.f.d = scal * xn * rg;
 			}
 
 			else
