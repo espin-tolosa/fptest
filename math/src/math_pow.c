@@ -17,6 +17,7 @@ extern f64_t math_pow(f64_t x, f64_t y)
 
     switch( result.type )
     {
+        case (GRADZ):
         case (FINITE):
         {
             if( x > 0.0 )
@@ -46,7 +47,7 @@ extern f64_t math_pow(f64_t x, f64_t y)
                     }
                     else
                     {
-                        result.f.d = math_pow_impl( x, y, FINITE );
+                        result.f.d = math_pow_impl( x, y, result.type );
                     }
                 }
             }
@@ -179,65 +180,6 @@ extern f64_t math_pow(f64_t x, f64_t y)
 
             break;
         }
-
-        case (GRADZ):
-        {
-            const f64_t iy = math_intrnd(y);
-
-            if( math_type( y ) == ZERO )
-            {
-                result.f.d = 1.0;
-            }
-
-            else if( y == +1.0 )
-            {
-                result.f.d = x;
-            }
-
-            else if( (x < 0.0) && (y < 0.0) && (iy == y) && ( (i128_t) iy % 2 != 0 ) )
-            {
-                result.f.d = -math_pow_impl(x, y, GRADZ); /* reaches +1000 ulps, alternative return -INF */
-            }
-
-            else if( (x < 0.0) && (y < 0.0) && (iy == y) && ( (i128_t) iy % 2 == 0 ) )
-            {
-                result.f.w[ W0 ] = INF;
-            }
-
-            else if( (x > 0.0) && (y < 0.0) )
-            {
-                result.f.d = math_pow_impl(x, y, GRADZ); /* reaches +1000 ulps, alternative return INF */
-            }
-
-            else if( (x > 0.0) && (y > 0.0) )
-            {
-                if( y == 1.0 )
-                {
-                    result.f.d = 1.0;
-                }
-                else
-                {
-                    result.f.w[ W0 ] = ZERO;
-                }
-            }
-
-            else if( (x < 0.0) && (y > 0.0) && (iy == y) && ( (i128_t) iy % 2 == 0 ) )
-            {
-                result.f.w[ W0 ] = ZERO;
-            }
-
-            else if( x < 0.0 && y < 0.0 )
-            {
-                result.f.w[ W0 ] = NIL;
-            }
-
-            else
-            {
-                result.f.w[ W0 ] = NIL;
-            }
-
-            break;
-        }
     }
 
     return result.f.d;
@@ -338,7 +280,7 @@ static f128_t math_pow_impl( f128_t x, f128_t y, u16_t type )
         /* NOP: e(0) = 1 */
     }
 
-    z = z * (f128_t) math_cwsetexp( 1., 1 + zexp );
+    z = z * (f128_t) math_cwsetexp( 1., zexp );
 
     return ( z );
 }
