@@ -150,6 +150,7 @@ typedef struct
 extern u16_t 	math_type 			( f64_t x );
 extern dnorm_t 	math_cwnormalize 	( f64_t x, u16_t type );
 extern f64_t 	math_intrnd			( f64_t x );
+extern f64_t 	math_to_integer		( f64_t x );
 extern f64_t 	math_cwsetexp		( f64_t x, i16_t n);
 
 extern f128_t   math_horner      	( f128_t x, const f128_t * poly, i32_t n );

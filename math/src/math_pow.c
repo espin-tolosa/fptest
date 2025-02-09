@@ -3,7 +3,7 @@
 
 static i16_t    math_pow_safe_exp   ( f128_t y                          );
 static u32_t    math_pow_iabs       ( i32_t n                           );
-static f128_t   math_pow_impl       ( f128_t x, f128_t y, u16_t type    );
+static f128_t   math_pow_impl       ( dnorm_t x, f128_t y               );
 static f128_t   math_pow_i16        ( f128_t x, i16_t n                 );
 static f128_t   math_pow_ydexp      ( i64_t zl, f128_t y,   f128_t dexp );
 static i64_t    math_pow_clamp      ( i64_t x,  i64_t xmin, i64_t xmax  );
@@ -34,20 +34,21 @@ extern f64_t math_pow(f64_t x, f64_t y)
 
                 else
                 {
-                    const f128_t z = y * math_log( x );
+                    const dnorm_t xn = math_cwnormalize( x, result.type );
+                    const f128_t z = y * xn.e;
 
-                    if( z < MATH_EXP_LO_RANGE )
+                    if( z < -1074.L )
                     {
                         result.f.w[ W0 ] = ZERO;
                     }
 
-                    else if( z > MATH_EXP_HI_RANGE )
+                    else if( z > 1025.5L )
                     {
                         result.f.w[ W0 ] = INF;
                     }
                     else
                     {
-                        result.f.d = math_pow_impl( x, y, result.type );
+                        result.f.d = math_pow_impl( xn, y );
                     }
                 }
             }
@@ -223,7 +224,7 @@ static f128_t math_pow_ydexp( i64_t zl, f128_t y, f128_t dexp )
 
     else
     {
-        const f128_t yrnd = math_intrnd( y );
+        const f128_t yrnd = math_to_integer( y );
 
         result = ( ( yrnd * dexp ) - (f128_t) zl ) + ( y - yrnd ) * dexp;
     }
@@ -231,13 +232,11 @@ static f128_t math_pow_ydexp( i64_t zl, f128_t y, f128_t dexp )
     return ( ln2 * result );
 }
 
-static f128_t math_pow_impl( f128_t x, f128_t y, u16_t type )
+static f128_t math_pow_impl( dnorm_t xn, f128_t y )
 {
-    static const i64_t huge_exp = 1842L; /* TODO: review this value */
     static const f128_t rthalf   = 0.70710678118654752440L;
 
-    dnorm_t xn  = math_cwnormalize( x, type );
-    f128_t yi   = math_intrnd( y );
+    f128_t yi   = math_to_integer( y );
 
     if ( xn.f.d < rthalf )
     {
@@ -251,7 +250,7 @@ static f128_t math_pow_impl( f128_t x, f128_t y, u16_t type )
 
     f128_t yx = math_pow_ydexp( zl, y, dexp );
 
-    const i16_t zexp = ( i16_t ) math_pow_clamp( zl, -huge_exp, huge_exp );
+    i16_t zexp = ( i16_t ) math_pow_clamp( zl, -1074, +1024 );
 
     const i16_t n = math_pow_safe_exp( y );
 
@@ -277,10 +276,9 @@ static f128_t math_pow_impl( f128_t x, f128_t y, u16_t type )
     else
     {
         z = 1.0L;
-        /* NOP: e(0) = 1 */
     }
 
-    z = z * (f128_t) math_cwsetexp( 1., zexp );
+    z = z * (f128_t) math_cwsetexp( 0.5, zexp );
 
     return ( z );
 }

@@ -331,6 +331,29 @@ extern f64_t math_intrnd(f64_t x)
 	return ( result.d );
 }
 
+extern f64_t math_to_integer( f64_t x )
+{
+	volatile f64_t result;
+
+	static const f64_t beta_to_t_minus_one = 0x1p53;
+
+    result = x + beta_to_t_minus_one;
+
+    result = result - beta_to_t_minus_one;
+
+    if( result > x )
+    {
+        result = result - 1.0;
+    }
+
+	else
+	{
+		/* NOP: rounding mode did not affect */
+	}
+
+	return ( result );
+}
+
 /*
  * math_intrnd_impl
  *
@@ -432,122 +455,3 @@ static f64_t math_significand( f64_t x )
 
 	return ( result.d );
 }
-
-#ifdef MATH_V2
-
-extern i16_t math_scale( f64_t *px, i16_t xexp )
-{	/* scale *px by 2^xexp with checking */
-	long lexp;
-	unsigned short *ps = (unsigned short *)px;
-	short xchar = (ps[W0] & DMASK) >> DOFF;
-
-	if (xchar == DMAX)	/* NaN or INF */
-	{
-		return (ps[W0] & DFRAC || ps[W1] || ps[W2] || ps[W3] ? NIL : INF);
-	}
-
-	else if (0 < xchar)
-	{
-		;	/* NOP: finite */
-	}
-
-	else if (0 < (xchar = math_norm(ps)))
-	{
-		return (0);	/* zero */
-	}
-
-	lexp = (long)xexp + xchar;
-
-	if (DMAX <= lexp)
-	{	/* overflow, return +/-INF */
-		*px = ps[W0] & SMASK ? -1./0. : 1./0.;
-		return (INF);
-	}
-
-	else if (0 < lexp)
-	{	/* finite result, repack */
-		ps[W0] = ps[W0] & ~DMASK | (short)lexp << DOFF;
-		return (FINITE);
-	}
-
-	else
-	{	/* denormalized, scale */
-		unsigned short sign = ps[W0] & SMASK;
-
-		ps[W0] = 1 << DOFF | ps[W0] & DFRAC;
-
-		if (--lexp < -(48+DOFF))
-		{	/* underflow, return +/-0 */
-			ps[W0] = sign, ps[W1] = 0;
-			ps[W2] = 0, ps[W3] = 0;
-			return (0);
-		}
-
-		else
-		{	/* nonzero, align fraction */
-			for (xexp = lexp; xexp <= -16; xexp += 16)
-			{	/* scale by words */
-				ps[W3] = ps[W2], ps[W2] = ps[W1];
-				ps[W1] = ps[W0], ps[W0] = 0;
-			}
-
-			if ((xexp = -xexp) != 0)
-			{	/* scale by bits */
-				ps[W3] = ps[W3] >> xexp
-					| ps[W2] << 16 - xexp;
-				ps[W2] = ps[W2] >> xexp
-					| ps[W1] << 16 - xexp;
-				ps[W1] = ps[W1] >> xexp
-					| ps[W0] << 16 - xexp;
-				ps[W0] >>= xexp;
-			}
-
-			ps[W0] |= sign;
-			return (FINITE);
-		}
-	}
-}
-
-/*
- * TODO: add description
- */
-
-extern i16_t math_norm( u16_t *ps )
-{	/* normalize double fraction */
-	short xchar;
-	unsigned short sign = ps[W0] & SMASK;
-
-	xchar = 1;
-	if ((ps[W0] &= DFRAC) != 0 || ps[W1] || ps[W2] || ps[W3])
-	{	/* nonzero, scale */
-
-		for (; ps[W0] == 0; xchar -= 16)
-		{	/* shift left by 16 */
-			ps[W0] = ps[W1], ps[W1] = ps[W2];
-			ps[W2] = ps[W3], ps[W3] = 0;
-		}
-
-		for (; ps[W0] < 1<<DOFF; --xchar)
-		{	/* shift left by 1 */
-			ps[W0] = ps[W0] << 1 | ps[W1] >> 15;
-			ps[W1] = ps[W1] << 1 | ps[W2] >> 15;
-			ps[W2] = ps[W2] << 1 | ps[W3] >> 15;
-			ps[W3] <<= 1;
-		}
-
-		for (; 1<<DOFF+1 <= ps[W0]; ++xchar)
-		{	/* shift right by 1 */
-			ps[W3] = ps[W3] >> 1 | ps[W2] << 15;
-			ps[W2] = ps[W2] >> 1 | ps[W1] << 15;
-			ps[W1] = ps[W1] >> 1 | ps[W0] << 15;
-			ps[W0] >>= 1;
-		}
-
-		ps[W0] &= DFRAC;
-	}
-
-	ps[W0] |= sign;
-	return (xchar);
-}
-
-#endif
